@@ -27,6 +27,9 @@ def _ogretmen_cevabi(govde: dict) -> str:
     kullanici = govde["messages"][-1]["content"]
     sema = (govde.get("response_format") or {}).get("json_schema", {}).get("schema", {})
     ozellik = sema.get("properties", {})
+    if not ozellik:                       # düşünen görevlerde şema gönderilmez; görev istemden anlaşılır
+        ozellik = {"sentez": {"kisa_cevap": 1}, "duzeltme": {"kisa_cevap": 1}, "yazi": {"paragraflar": 1},
+                   "yazi_duzeltme": {"paragraflar": 1}}.get(gorev_turu(govde["messages"]), {})
     kanun = re.search(r"\[(K\d+)\] 9999 sayılı Örnek Personel Kanunu, md\. 2\b", kullanici)
     k = kanun.group(1) if kanun else "K1"
     if "gelen_yazi" in ozellik:
@@ -151,3 +154,10 @@ def test_egitim_verisi_dengeleme_ve_uzunluk(tmp_path):
                                                     "cevap": "{}"}],
                                         lambda m: "".join(x["content"] for x in m), len, 200)
     assert atilan == 1 and all(set(x) == {"prompt", "completion", "gorev"} for x in metinler)
+
+
+def test_dusunce_ayirma():
+    from akil_hocasi.yz.damitma import dusunceyi_ayir
+    assert dusunceyi_ayir('<think>a</think>\n{"x": 1}') == ('{"x": 1}', "a")
+    assert dusunceyi_ayir('uzun düşünce</think>\n\n{"x": 1}') == ('{"x": 1}', "uzun düşünce")   # açılışı istemde
+    assert dusunceyi_ayir('{"x": 1}') == ('{"x": 1}', "")

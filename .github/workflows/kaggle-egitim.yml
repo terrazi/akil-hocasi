@@ -62,6 +62,18 @@ jobs:
           python kaggle/kaggle_api.py ${{ inputs.islem }} ${{ inputs.asama }}
           --tur ${{ inputs.tur }} --veri-turu ${{ inputs.veri_turu }} --sure-saat ${{ inputs.sure_saat }}
           --ogrenci ${{ inputs.ogrenci }} ${{ inputs.veri_seti != '' && format('--veri-seti {0}', inputs.veri_seti) || '' }} $EK
+      - name: Veri turu tanılama çıktısını sakla
+        if: inputs.islem == 'durum' && inputs.asama == 'veri'
+        uses: actions/upload-artifact@v4
+        with:
+          name: akilhocasi-veri-${{ inputs.tur }}-tanilama
+          path: |
+            kaggle_cikti/**/*.json
+            kaggle_cikti/**/*.jsonl
+            kaggle_cikti/**/*.txt
+            kaggle_cikti/**/*.log
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Eğitilmiş modeli sakla
         if: inputs.islem == 'durum' && inputs.asama == 'egit' && steps.kaggle.outputs.durum == 'bitti'
         uses: actions/upload-artifact@v4

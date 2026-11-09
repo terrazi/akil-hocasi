@@ -74,9 +74,11 @@ def llama_hazirla(gpu: bool = True) -> Path:
             hedef.mkdir(parents=True, exist_ok=True)
             with tarfile.open(arsiv) as t:
                 t.extractall(hedef, filter="data")
-            if (hedef / "llama-server").is_file():
+            if (hedef / "llama-server").is_file() and llama_calisiyor(hedef):
                 bildir(f"llama.cpp önceki derlemeden alındı ({arsiv})")
                 return hedef
+            bildir(f"Önceki derleme bu ortamda çalışmıyor ({arsiv}); yeniden derlenecek")
+            shutil.rmtree(hedef, ignore_errors=True)
     kaynak = GECICI / "llama.cpp"
     if not kaynak.is_dir():
         sh(f"git clone --depth 1 https://github.com/ggml-org/llama.cpp {kaynak}")
@@ -104,6 +106,17 @@ def llama_hazirla(gpu: bool = True) -> Path:
         if f.is_file():
             shutil.copy2(f, hedef / f.name)
     return hedef
+
+
+def llama_calisiyor(klasor: Path) -> bool:
+    """Arşivden açılan derleme bu görüntüde çalışıyor mu (CUDA sürümü değişmiş olabilir)?"""
+    ortam = {**os.environ, "LD_LIBRARY_PATH": f"{klasor}:{os.environ.get('LD_LIBRARY_PATH', '')}"}
+    try:
+        c = subprocess.run([str(klasor / "llama-server"), "--version"], capture_output=True, text=True, timeout=60,
+                           env=ortam)
+        return c.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def cuda_surucu_kutuphanesi() -> str:
@@ -284,6 +297,7 @@ def veri(arg) -> None:
     finally:
         for sv in sunucular:
             sv.durdur()
+        gunluk_kopyala(veri_k)
     if bin_k:
         llama_arsivle(bin_k, veri_k / "llama_bin.tar.gz")
     k.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -296,9 +310,21 @@ def veri(arg) -> None:
     bildir(f"Veri hazır: {ornek_sayisi} örnek ({veri_k}). Defteri yeniden çalıştırırsanız veri birikir.")
 
 
+def gunluk_kopyala(hedef: Path, satir: int = 400) -> None:
+    """Model sunucularının günlüklerinin sonu çıktıya (tanılama)."""
+    for g in sorted((GECICI / "gunluk").glob("*.log")):
+        try:
+            satirlar = g.read_text("utf-8", errors="replace").splitlines()
+            (hedef / f"sunucu_{g.stem}.txt").write_text("\n".join(satirlar[-satir:]) + "\n", "utf-8")
+        except OSError:
+            pass
+
+
 def onceki_veriler() -> list[Path]:
-    """Girdilerdeki önceki veri turlarının klasörleri (eskiden yeniye)."""
-    return sorted({p.parent for p in girdide_bul(f"{VERI_ADI}/manifest.json")}, key=lambda d: (d / "manifest.json").stat().st_mtime)
+    """Girdilerdeki önceki veri turlarının klasörleri (eskiden yeniye). Deneme turunun (tur 0) verisi
+    birleştirilmez; ondan yalnız llama.cpp derlemesi alınır."""
+    return sorted({p.parent for p in girdide_bul(f"{VERI_ADI}/manifest.json") if "akilhocasi-veri-0" not in str(p)},
+                  key=lambda d: (d / "manifest.json").stat().st_mtime)
 
 
 def birlestir(kaynaklar: list[Path], hedef: Path) -> None:

@@ -87,6 +87,9 @@ class Cagri:
     json: bool
     dusunce: int = 0                 # öğretmenin düşünme uzunluğu (karakter; yalnız istatistik)
     sure: float = 0.0
+    bitis: str = ""                  # sunucunun bitiş nedeni (stop / length)
+    belirtec: int = 0                # üretilen belirteç sayısı
+    ham: str = ""                    # ayıklamadan önceki ham çıktı (yalnız tanılama; kısaltılmış)
 
 
 class OgretmenModeli:
@@ -121,9 +124,11 @@ class OgretmenModeli:
         dusun = gorev in self.dusunen
         govde = {"messages": mesajlar, "max_tokens": max_tokens + (3000 if dusun else 0), "temperature": sicaklik,
                  "top_p": 0.9, "cache_prompt": True, "chat_template_kwargs": {"enable_thinking": dusun}}
-        if json_sema:
+        # Düşünürken dilbilgisi (JSON şeması) uygulanmaz: llama.cpp kısıtı düşünce bloğunun içine de uygular ve
+        # model JSON'u düşüncenin içinde bırakır. Düşünen öğretmen JSON'u istemdeki tarife göre kendisi yazar.
+        if json_sema and not dusun:
             govde["response_format"] = {"type": "json_schema", "json_schema": {"name": "cikti", "schema": json_sema}}
-        elif json_mod:
+        elif json_mod and not dusun:
             govde["response_format"] = {"type": "json_object"}
         bas = time.monotonic()
         istek = urllib.request.Request(f"{self.adres}/v1/chat/completions", json.dumps(govde).encode("utf-8"),
@@ -135,20 +140,38 @@ class OgretmenModeli:
             with self._sayac_kilit:
                 self.sayac["hata"] += 1
             raise ModelHatasi(f"Öğretmen isteği başarısız: {e}") from e
-        mesaj = veri["choices"][0]["message"]
-        icerik = mesaj.get("content") or ""
+        secim = veri["choices"][0]
+        mesaj = secim.get("message") or {}
+        ham = mesaj.get("content") or ""
         dusunce = mesaj.get("reasoning_content") or ""
-        if "<think>" in icerik:
-            dusunce += "".join(re.findall(r"<think>(.*?)</think>", icerik, re.S))
-            icerik = _DUSUNCE.sub("", icerik)
-        icerik = icerik.strip()
+        icerik, ek_dusunce = dusunceyi_ayir(ham)
+        dusunce += ek_dusunce
+        beklenen_json = bool(json_sema or json_mod)
+        if beklenen_json and _json_gecerli(icerik) is None and not icerik and _json_gecerli(dusunce) is not None:
+            icerik = _JSON_SON.search(dusunce).group(0)     # sunucu cevabı düşünce alanına koymuş
         with self._sayac_kilit:
             self.sayac["cagri"] += 1
         kayit = getattr(self._yerel, "kayit", None)
         if kayit is not None:
-            kayit.append(Cagri(gorev, mesajlar, icerik, bool(json_sema or json_mod), len(dusunce),
-                               round(time.monotonic() - bas, 1)))
+            kayit.append(Cagri(gorev, mesajlar, icerik, beklenen_json, len(dusunce), round(time.monotonic() - bas, 1),
+                               str(secim.get("finish_reason") or ""),
+                               int((veri.get("usage") or {}).get("completion_tokens") or 0),
+                               (ham[:2500] + ("\n…[düşünce] " + dusunce[-1500:] if dusunce else ""))))
         return icerik
+
+
+_JSON_SON = re.compile(r"\{.*\}", re.S)
+
+
+def dusunceyi_ayir(metin: str) -> tuple[str, str]:
+    """Ham çıktıdan düşünceyi ayırır: tam <think>…</think> blokları ve (şablon düşünceyi istemde açtıysa)
+    açılışı görünmeyen düşüncenin sonundaki tek </think>. (cevap, düşünce) döner."""
+    dusunce = "".join(re.findall(r"<think>(.*?)</think>", metin, re.S))
+    metin = _DUSUNCE.sub("", metin)
+    if "</think>" in metin:
+        once, _, metin = metin.rpartition("</think>")
+        dusunce += once
+    return metin.replace("<think>", "").strip(), dusunce
 
 
 def _json_gecerli(metin: str) -> dict | None:
@@ -170,9 +193,18 @@ class DamitmaRaporu:
     atilan: dict[str, int] = field(default_factory=dict)
     yazi: int = 0
     sure_sn: float = 0.0
+    cagri: dict[str, dict] = field(default_factory=dict)     # görev → {n, sure, belirtec, kesik, bozuk}
 
     def say(self, sozluk: dict, anahtar: str, n: int = 1) -> None:
         sozluk[anahtar] = sozluk.get(anahtar, 0) + n
+
+    def cagri_say(self, k: "Cagri", bozuk: bool) -> None:
+        d = self.cagri.setdefault(k.gorev, {"n": 0, "sure": 0.0, "belirtec": 0, "kesik": 0, "bozuk": 0})
+        d["n"] += 1
+        d["sure"] = round(d["sure"] + k.sure, 1)
+        d["belirtec"] += k.belirtec
+        d["kesik"] += k.bitis == "length"
+        d["bozuk"] += bozuk
 
     def ozet(self) -> str:
         ornek = ", ".join(f"{k} {v}" for k, v in sorted(self.ornek.items()))
@@ -192,6 +224,8 @@ class Damitici:
         self.rapor = DamitmaRaporu()
         self._yaz_kilit = threading.Lock()
         self.ornek_dosyasi = self.cikti / "ornekler.jsonl"
+        self.atilan_dosyasi = self.cikti / "atilan_ornekler.jsonl"   # tanılama: her nedenden ilk birkaç çağrı
+        self._atilan_sayac: dict[str, int] = {}
         self.sinav_dosyasi = self.cikti / "sinav.jsonl"
         self.islenen = self._islenenler()
         from .oz_gelisim import SEMA as SENTETIK_SEMA
@@ -299,8 +333,11 @@ class Damitici:
         ornekler, hatalar = [], []
         for k in kayit:
             v = _json_gecerli(k.cevap) if k.json else None
+            with self._yaz_kilit:
+                self.rapor.cagri_say(k, bool(k.json and v is None))
             if k.json and v is None:
                 self.rapor.say(self.rapor.atilan, f"{k.gorev}:bozuk")
+                self._atilan_yaz(k, "bozuk")
                 continue
             if k.gorev == "cozumleme":
                 ok = bool(v and v.get("personel_turu") and isinstance(v.get("alt_sorular", []), list))
@@ -317,6 +354,9 @@ class Damitici:
                 ornekler.append(self._ornek(k, bolum, h["id"]))
             else:
                 self.rapor.say(self.rapor.atilan, k.gorev)
+                self._atilan_yaz(k, "sinama" if k.gorev in ("sentez", "duzeltme", "elestiri") else "gecersiz",
+                                 {"durum": c.durum.value, "altin": gecti, "dayanak_yok": dayanak_yok,
+                                  "cikarilan": [x.get("test") for x in den.get("cikarilanlar", [])][:6]})
         for x in den.get("cikarilanlar", [])[:8]:
             hatalar.append(f"[{x.get('test', '')}] {x.get('metin', '')[:160]} — {x.get('neden', '')[:120]}")
         if temiz:
@@ -324,6 +364,19 @@ class Damitici:
         if hatalar:
             ornekler += self._ders_ornekleri(h["soru"], hatalar, bolum, h["id"])
         self._yaz(ornekler, h["id"])
+
+    def _atilan_yaz(self, k: "Cagri", neden: str, ek: dict | None = None, sinir: int = 12) -> None:
+        """Atılan çağrının tanılama kaydı (her görev/neden için ilk birkaçı): ham çıktı, bitiş nedeni, süre."""
+        anahtar = f"{k.gorev}:{neden}"
+        with self._yaz_kilit:
+            if self._atilan_sayac.get(anahtar, 0) >= sinir:
+                return
+            self._atilan_sayac[anahtar] = self._atilan_sayac.get(anahtar, 0) + 1
+            son = k.mesajlar[-1].get("content", "") if k.mesajlar else ""
+            with self.atilan_dosyasi.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"neden": anahtar, "bitis": k.bitis, "belirtec": k.belirtec, "sure": k.sure,
+                                    "dusunce": k.dusunce, "istem_sonu": str(son)[-600:], "ham": k.ham,
+                                    "cevap": k.cevap[:1500], **(ek or {})}, ensure_ascii=False) + "\n")
 
     def _ders_ornekleri(self, soru: str, hatalar: list[str], bolum: str, soru_id: str) -> list[dict]:
         """Öğretmen, sınamada çıkarılan cümlelerden yöntem dersi çıkarır; çekirdeğin ders süzgecinden geçen
@@ -393,6 +446,7 @@ class Damitici:
                     v = _json_gecerli(ham) or {}
                     if len(str(v.get("gelen_yazi", ""))) < 200 or not str(v.get("talimat", "")).strip():
                         self.rapor.say(self.rapor.atilan, "gelen_yazi")
+                        self._atilan_yaz(Cagri("ogretmen", [], ham, True), "gelen_yazi")
                         continue
                     gelen = cozumle(str(v["gelen_yazi"]))
                     tur = v.get("tur") if v.get("tur") in ("cevap", "gorus", "bilgi_isteme", "talep") else "cevap"
@@ -407,6 +461,11 @@ class Damitici:
                 temiz = sonuc.model_kullanildi and not sonuc.cikarilanlar and sonuc.hata_sayisi == 0
                 ornekler = []
                 for k in kayit:
+                    with self._yaz_kilit:
+                        self.rapor.cagri_say(k, bool(k.json and _json_gecerli(k.cevap) is None))
+                    if k.gorev in ("yazi", "yazi_duzeltme") and not temiz:
+                        self._atilan_yaz(k, "yazi", {"model": sonuc.model_kullanildi, "hata": sonuc.hata_sayisi,
+                                                     "cikarilan": [str(x)[:200] for x in sonuc.cikarilanlar][:5]})
                     if k.gorev in ("yazi", "yazi_duzeltme") and temiz and bolum == "egitim":
                         ornekler.append(self._ornek(k, bolum, kimlik))
                     elif k.gorev in ("cozumleme",) and bolum == "egitim" and _json_gecerli(k.cevap):

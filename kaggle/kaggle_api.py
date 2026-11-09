@@ -111,6 +111,34 @@ def defter_hazirla(asama: str, ayarlar: dict[str, object]) -> dict:
     return d
 
 
+def derleme_veri_seti() -> str:
+    return f"{kullanici()}/akilhocasi-llama-bin"
+
+
+def derleme_hazir() -> bool:
+    c = subprocess.run(["kaggle", "datasets", "status", derleme_veri_seti()], capture_output=True, text=True)
+    return c.returncode == 0 and "ready" in c.stdout.lower()
+
+
+def derleme_paylas(cikti: Path) -> None:
+    """Defter çıktısındaki llama.cpp derlemesini özel bir veri seti yapar; sonraki defterler yeniden derlemez
+    (her defterde ~30 dk kazanç)."""
+    arsiv = next(iter(cikti.rglob("llama_bin.tar.gz")), None)
+    if arsiv is None or derleme_hazir():
+        return
+    klasor = Path("kaggle_gonder") / "llama_bin"
+    shutil.rmtree(klasor, ignore_errors=True)
+    klasor.mkdir(parents=True)
+    shutil.copy2(arsiv, klasor / arsiv.name)
+    (klasor / "dataset-metadata.json").write_text(json.dumps(
+        {"title": "akilhocasi-llama-bin", "id": derleme_veri_seti(), "licenses": [{"name": "other"}]}), "utf-8")
+    c = subprocess.run(["kaggle", "datasets", "status", derleme_veri_seti()], capture_output=True, text=True)
+    if c.returncode == 0:
+        kaggle("datasets", "version", "-p", str(klasor), "-m", "llama.cpp CUDA derlemesi", yakala=True)
+    else:
+        kaggle("datasets", "create", "-p", str(klasor), yakala=True)
+
+
 def baslat(arg) -> None:
     k = kimlik(arg.asama, arg.tur)
     klasor = Path("kaggle_gonder") / k.split("/")[1]
@@ -125,9 +153,10 @@ def baslat(arg) -> None:
     defter = defter_hazirla(arg.asama, ayar)
     dosya = f"{k.split('/')[1]}.ipynb"
     (klasor / dosya).write_text(json.dumps(defter, ensure_ascii=False), "utf-8")
+    veri_setleri = [x for x in arg.veri_seti if x] + ([derleme_veri_seti()] if derleme_hazir() else [])
     meta = {"id": k, "title": k.split("/")[1], "code_file": dosya, "language": "python", "kernel_type": "notebook",
             "is_private": True, "enable_gpu": True, "enable_internet": True, "machine_shape": "NvidiaTeslaT4",
-            "dataset_sources": [x for x in arg.veri_seti if x], "kernel_sources": girdiler,
+            "dataset_sources": veri_setleri, "kernel_sources": girdiler,
             "competition_sources": [], "model_sources": []}
     (klasor / "kernel-metadata.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps(meta, ensure_ascii=False, indent=1))
@@ -154,6 +183,8 @@ def durum(arg) -> None:
             except ValueError:
                 satirlar = g.read_text("utf-8", errors="replace").splitlines()
             print("\n".join(satirlar[-400:]))
+        if "complete" in durum_metni:
+            derleme_paylas(hedef)
         for ad in ("manifest.json", "rapor.json", "EGITIM_RAPORU.md"):
             for f in hedef.rglob(ad):
                 print(f"===== {f} =====\n{f.read_text('utf-8', errors='replace')[:6000]}")
