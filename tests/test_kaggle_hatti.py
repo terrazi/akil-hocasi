@@ -115,6 +115,11 @@ def test_ozel_model_ekleme_ve_secim(tmp_path, monkeypatch):
     assert yz.secili("sohbet")["kimlik"] == "akilhocasi-4b-20261110"          # kapıyı geçen eğitilmiş model öncelikli
     yz.ust_bilgi_guncelle(b["kimlik"], yerel_sinav={"sonuc": "reddedildi"})
     assert yz.secili("sohbet")["kimlik"] == "qwen3.5-4b"                       # yerel sınavda kötü çıkarsa temel
+    (disari / "kapisiz.gguf").write_bytes(b"GGUF" + b"2" * 10)
+    (disari / "kapisiz.json").write_text(json.dumps({"kimlik": "kapisiz", "tur": "sohbet", "egitim": {"kapi": False}}))
+    yz.ozel_model_ekle(disari / "kapisiz.gguf")
+    assert yz.secili("sohbet")["kimlik"] == "qwen3.5-4b"                       # kapıyı geçmeyen kendiliğinden seçilmez
+    assert yz.sil("kapisiz")
     sahte = disari / "sahte.gguf"
     sahte.write_bytes(b"XXXX")
     with pytest.raises(Exception, match="GGUF"):

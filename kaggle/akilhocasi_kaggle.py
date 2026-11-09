@@ -412,7 +412,7 @@ def egit(arg) -> None:
     bilgi = {
         "kimlik": kimlik, "ad": f"Akıl Hocası {arg.ogrenci} (Kaggle eğitimli, {surum})", "tur": "sohbet",
         "baglam": 8192, "dusunme": False, "temel": katalog_kimlik, "en_az_bellek_gb": bellek,
-        "oncelik": 80 if kapi_sonucu[0] else 60, "dosya": hedef.name,
+        "oncelik": 80 if kapi_sonucu[0] else 0, "dosya": hedef.name,
         "egitim": {"tarih": datetime.now().isoformat(timespec="seconds"), "ornek": len(ciftler),
                    "adim": sonuc.global_step, "kayip": [round(kayiplar[0], 3), round(kayiplar[-1], 3)] if kayiplar else [],
                    "karne_temel": karne_temel, "karne_yeni": karne_yeni, "kapi": kapi_sonucu[0],

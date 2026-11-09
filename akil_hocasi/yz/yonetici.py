@@ -62,8 +62,11 @@ class YZYoneticisi:
             t = self.katalog.getir(m["kimlik"])
             if t:
                 return t.oncelik
-            if (m.get("yerel_sinav") or {}).get("sonuc") == "reddedildi":
+            yerel = (m.get("yerel_sinav") or {}).get("sonuc")
+            if yerel == "reddedildi":
                 return 0                              # bu bilgisayardaki sınavda temel modelden kötü çıktı
+            if not ((m.get("egitim") or {}).get("kapi") or yerel == "benimsendi"):
+                return 0                              # kapıdan geçmemiş model kendiliğinden seçilmez (yalnız yarışta)
             return int(m.get("oncelik", 0))           # katalog dışı (ör. Kaggle'da eğitilmiş) model
 
         def bellek_yeter(m):
@@ -98,7 +101,7 @@ class YZYoneticisi:
                       "baglam": int(bilgi.get("baglam", 8192)), "dusunme": bool(bilgi.get("dusunme", False)),
                       "dosya": f"{kimlik}.gguf", "boyut": kaynak.stat().st_size, "kaynak": bilgi.get("kaynak", "elle"),
                       "eklenme": datetime.now().isoformat(timespec="seconds")})
-        bilgi.setdefault("oncelik", 75 if (bilgi.get("egitim") or {}).get("kapi") else 40)
+        bilgi.setdefault("oncelik", 75 if (bilgi.get("egitim") or {}).get("kapi") else 0)
         hedef = self.model_klasoru() / f"{kimlik}.gguf"
         if kaynak.resolve() != hedef.resolve():
             shutil.copy2(kaynak, hedef)
@@ -154,8 +157,12 @@ class YZYoneticisi:
     def sil(self, kimlik: str) -> bool:
         for m in self.kurulu():
             if m["kimlik"] == kimlik:
-                if self.secili(m["tur"]) and self.secili(m["tur"])["kimlik"] == kimlik and self._calisiyor(m["tur"]):
+                calisan = self.sohbet_sunucusu if m["tur"] == "sohbet" else self.anlam_sunucusu
+                if calisan and calisan.calisiyor() and Path(calisan.model_yolu).resolve() == Path(m["yol"]).resolve():
                     raise ModelHatasi("Çalışan model silinemez; önce başka bir model seçin")
+                if self.ayarlar.al(f"yz.{m['tur']}_modeli", "") == kimlik:
+                    self.ayarlar.ayarla(f"yz.{m['tur']}_modeli", "")
+                    self.ayarlar.kaydet()
                 Path(m["yol"]).unlink(missing_ok=True)
                 Path(m["yol"]).with_suffix(".json").unlink(missing_ok=True)
                 return True
