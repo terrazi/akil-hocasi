@@ -239,6 +239,58 @@
     return cikti;
   }
 
+  const ANA_BOLGE = "main, article, [role='main'], #content, #icerik, #main-content, .content, .icerik, .page-content, .entry-content";
+  const EN_COK_METIN = 1500000;
+
+  function varsayilanGizliMi(el) {
+    if (!el || el.tagName === "BODY" || el.offsetParent !== null) return false;
+    if (typeof getComputedStyle !== "function") return false;
+    const stil = getComputedStyle(el);
+    return stil.display === "none" || stil.visibility === "hidden";
+  }
+
+  /** Bir belgeyi okur (içerik betiği ve programın gömülü tarayıcı motoru aynı işlevi kullanır).
+   * Dönüş: {tur:"kapsam_disi"} | {tur:"engel", neden} | {tur:"sayfa", kayit:{url, baslik, metin, dil, dosyalar, baglantilar, imza, taranacak}}
+   * Yalnızca okur: hiçbir öğeye tıklamaz, sayfayı değiştirmez. */
+  function sayfaOku(belge, konum, gizliMi) {
+    const adres = konum.href;
+    if (!kapsamdaMi(adres)) return { tur: "kapsam_disi", url: adres };
+    if (sistemMi(adres)) return { tur: "engel", url: adres, neden: "kamu sistemi veya oturumlu uygulama" };
+    if (!belge.body) return { tur: "engel", url: adres, neden: "boş sayfa" };
+    const baglantilar = Array.from(belge.querySelectorAll("a[href]")).slice(0, 4000).map((a) => ({
+      url: a.href,
+      metin: (a.innerText || a.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200),
+    }));
+    if (belge.querySelector("input[type='password']") || oturumIsareti(baglantilar)) {
+      return { tur: "engel", url: adres, neden: "oturum açık sayfa" };
+    }
+    const kok = belge.querySelector(ANA_BOLGE) || belge.body;
+    const metin = maskele(metinCikar(kok, gizliMi || varsayilanGizliMi)).slice(0, EN_COK_METIN);
+    const h = konum.hostname.toLowerCase();
+    const dosyalar = [];
+    const sayfalar = [];
+    for (const b of baglantilar) {
+      const u = adresSadelestir(b.url, adres);
+      if (!u) continue;
+      if (dosyaMi(u)) dosyalar.push({ url: u, metin: maskele(b.metin) });
+      else if (host(u) === h) sayfalar.push({ url: u, metin: b.metin });
+    }
+    const h1 = belge.querySelector("h1");
+    return {
+      tur: "sayfa",
+      kayit: {
+        url: adres,
+        baslik: maskele(((h1 && (h1.innerText || h1.textContent)) || belge.title || "").trim()).slice(0, 300),
+        metin,
+        dil: (belge.documentElement && belge.documentElement.lang) || "",
+        dosyalar: dosyalar.slice(0, 300),
+        baglantilar: sayfalar.slice(0, 600),
+        imza: imzaCikar(belge.body),
+        taranacak: taramaBaglantilari(sayfalar, adres, h),
+      },
+    };
+  }
+
   function bekleme(hiz) {
     const p = HIZ[hiz] || HIZ.normal;
     return Math.round(p.bekle + (Math.random() * 2 - 1) * p.sapma);
@@ -248,7 +300,7 @@
     BIRINCIL, IKINCIL, SISTEM_ALANLARI, SISTEM_ANAHTARLARI, ISTISNALAR, DOSYA_UZANTILARI, HIZ,
     kurallariGuncelle, birincilMi, ikincilMi, kapsamdaMi, sistemMi, dosyaMi, adresSadelestir, riskliBaglanti,
     oturumIsareti, maskele, yolKalibi, benzerlik, genisletilsinMi, robotsAyristir, robotsIzinli, metinCikar,
-    imzaCikar, taramaBaglantilari, bekleme, host,
+    imzaCikar, taramaBaglantilari, bekleme, host, sayfaOku,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = AHKurallar;
   else kok.AHKurallar = AHKurallar;

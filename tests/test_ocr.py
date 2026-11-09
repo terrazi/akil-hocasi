@@ -12,10 +12,20 @@ from akil_hocasi.ocr.iyilestirme import harf_yuksekligi, iyilestir
 from akil_hocasi.ocr.motorlar import TesseractMotoru
 from akil_hocasi.ocr.sonuc import OcrKelime, OcrSonuc
 
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+import os
+from pathlib import Path
+
+# Türkçe karakterli, her işletim sisteminde bulunan bir yazı tipi (Linux: DejaVu, Windows: Segoe UI / Arial)
+_ADAYLAR = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "segoeui.ttf"),
+            os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "arial.ttf"),
+            "/System/Library/Fonts/Supplemental/Arial.ttf"]
+FONT = next((a for a in _ADAYLAR if Path(a).is_file()), None)
 
 
 def _ekran_goruntusu(satirlar, boyut=14, genislik=760):
+    if FONT is None:
+        pytest.skip("Türkçe yazı tipi bulunamadı")
     """Ekran görüntüsünü taklit eden küçük punto metin."""
     font = ImageFont.truetype(FONT, boyut)
     yukseklik = 20 + len(satirlar) * (boyut + 10)

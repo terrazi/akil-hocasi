@@ -1,6 +1,7 @@
 /* Akıl Hocası Gözlemci — içerik betiği.
  * Yalnızca okur: hiçbir öğeye tıklamaz, form doldurmaz, sayfayı değiştirmez.
  * Kamu sistemi, parola alanı veya çıkış bağlantısı görülürse hiçbir içerik okunmaz.
+ * Okuma kuralı (AHKurallar.sayfaOku) programın gömülü tarayıcı motoruyla ortaktır.
  */
 (() => {
   "use strict";
@@ -8,77 +9,35 @@
   window.__akilHocasiGozlem = true;
 
   const K = globalThis.AHKurallar;
-  const EN_COK_METIN = 1500000;
   const EN_COK_GONDERIM = 5;
   let gonderim = 0;
   let sonOzet = "";
   let zamanlayici = null;
+  let ilkPlan = 0;
 
-  function anaBolge() {
-    return document.querySelector("main, article, [role='main'], #content, #icerik, #main-content, .content, .icerik, .page-content, .entry-content") || document.body;
-  }
-
-  function gizliMi(el) {
-    if (el === document.body) return false;
-    if (el.offsetParent !== null) return false;
-    const stil = getComputedStyle(el);
-    return stil.display === "none" || stil.visibility === "hidden";
-  }
-
-  function ozet(metin) {
+  function ozet(kayit) {
     let h = 0;
-    for (let i = 0; i < metin.length; i += 7) h = (h * 31 + metin.charCodeAt(i)) | 0;
-    return location.href + "|" + metin.length + "|" + h;
+    const m = kayit.metin;
+    for (let i = 0; i < m.length; i += 7) h = (h * 31 + m.charCodeAt(i)) | 0;
+    return kayit.url + "|" + m.length + "|" + h;
   }
 
   function gozle() {
     if (gonderim >= EN_COK_GONDERIM || !document.body) return;
-    const adres = location.href;
-    if (!K.kapsamdaMi(adres)) return;
-    if (K.sistemMi(adres)) {
-      chrome.runtime.sendMessage({ tur: "engel", url: adres, neden: "kamu sistemi veya oturumlu uygulama" });
+    const sonuc = K.sayfaOku(document, location);
+    if (sonuc.tur === "kapsam_disi") return;
+    if (sonuc.tur === "engel") {
+      gonderim = EN_COK_GONDERIM;                       // bu sayfa bir daha okunmaz
+      chrome.runtime.sendMessage({ tur: "engel", url: sonuc.url, neden: sonuc.neden });
       return;
     }
-    const baglantilar = Array.from(document.querySelectorAll("a[href]")).slice(0, 4000).map((a) => ({
-      url: a.href,
-      metin: (a.innerText || a.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200),
-    }));
-    if (document.querySelector("input[type='password']") || K.oturumIsareti(baglantilar)) {
-      chrome.runtime.sendMessage({ tur: "engel", url: adres, neden: "oturum açık sayfa" });
-      return;
-    }
-
-    const metin = K.maskele(K.metinCikar(anaBolge(), gizliMi)).slice(0, EN_COK_METIN);
-    const o = ozet(metin);
+    const o = ozet(sonuc.kayit);
     if (o === sonOzet) return;
     sonOzet = o;
     gonderim++;
-
-    const dosyalar = [];
-    const sayfalar = [];
-    const host = location.hostname.toLowerCase();
-    for (const b of baglantilar) {
-      const u = K.adresSadelestir(b.url, adres);
-      if (!u) continue;
-      if (K.dosyaMi(u)) dosyalar.push({ url: u, metin: K.maskele(b.metin) });
-      else if (K.host(u) === host) sayfalar.push({ url: u, metin: b.metin });
-    }
-    const h1 = document.querySelector("h1");
-    chrome.runtime.sendMessage({
-      tur: "sayfa",
-      kayit: {
-        url: adres,
-        baslik: K.maskele(((h1 && h1.innerText) || document.title || "").trim()).slice(0, 300),
-        metin,
-        dil: document.documentElement.lang || "",
-        dosyalar: dosyalar.slice(0, 300),
-        baglantilar: sayfalar.slice(0, 600),
-        imza: K.imzaCikar(document.body),
-      },
-    });
+    chrome.runtime.sendMessage({ tur: "sayfa", kayit: sonuc.kayit });
   }
 
-  let ilkPlan = 0;
   function planla(gecikme) {
     const simdi = Date.now();
     if (zamanlayici && simdi - ilkPlan > 6000) return;   // sürekli değişen sayfada (kayan duyuru vb.) en geç 6 sn
