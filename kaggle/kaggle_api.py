@@ -1,7 +1,9 @@
 """Kaggle defterlerini GitHub Actions'tan başlatma ve izleme (Kaggle API).
 
-Gerekenler: depo ayarlarında iki gizli değer (Settings → Secrets and variables → Actions):
-  KAGGLE_USERNAME, KAGGLE_KEY  — kaggle.com → Settings → API → "Create New Token" ile inen kaggle.json'daki değerler.
+Gerekenler: depo ayarlarında gizli değerler (Settings → Secrets and variables → Actions):
+  KAGGLE_USERNAME   — Kaggle kullanıcı adı (kaggle.com/<kullanıcı adı>)
+  KAGGLE_API_TOKEN  — kaggle.com → Settings → API → "Generate New Token" ile verilen anahtar
+  (eski tür: "Create Legacy API Key" ile inen kaggle.json'daki key → KAGGLE_KEY)
 Kaggle hesabı telefonla doğrulanmış olmalıdır (GPU ve internet için).
 
   python kaggle/kaggle_api.py baslat veri --tur 1 --sure-saat 10.5
@@ -28,9 +30,14 @@ KOK = Path(__file__).resolve().parent
 
 
 def kullanici() -> str:
+    """Kaggle kullanıcı adı. Kimlik: yeni tür API anahtarı (KAGGLE_API_TOKEN) ya da eski tür (KAGGLE_KEY)."""
+    for ad in ("KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"):
+        if not os.environ.get(ad, "").strip():
+            os.environ.pop(ad, None)                  # boş gizli değer Kaggle aracını yanıltmasın
     k = os.environ.get("KAGGLE_USERNAME", "").strip()
-    if not k or not os.environ.get("KAGGLE_KEY", "").strip():
-        sys.exit("KAGGLE_USERNAME ve KAGGLE_KEY tanımlı değil (GitHub › Settings › Secrets and variables › Actions).")
+    if not k or not (os.environ.get("KAGGLE_API_TOKEN") or os.environ.get("KAGGLE_KEY")):
+        sys.exit("Kaggle kimliği eksik. GitHub › Settings › Secrets and variables › Actions altına KAGGLE_USERNAME "
+                 "ve KAGGLE_API_TOKEN (ya da eski tür anahtar için KAGGLE_KEY) ekleyin.")
     return k
 
 
@@ -116,10 +123,17 @@ def durum(arg) -> None:
         f"durum={'bitti' if 'complete' in durum_metni else 'hata' if 'error' in durum_metni else 'suruyor'}\n")
 
 
+def dogrula(arg) -> None:
+    """Kimliği sınar: hesaptaki defterleri listeler (hiçbir şey başlatmaz)."""
+    print(f"Kaggle kullanıcısı: {kullanici()}")
+    kaggle("kernels", "list", "--mine", "--page-size", "20")
+    print("Kaggle kimliği çalışıyor.")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("islem", choices=["baslat", "durum"])
-    p.add_argument("asama", choices=["veri", "egit"])
+    p.add_argument("islem", choices=["baslat", "durum", "dogrula"])
+    p.add_argument("asama", choices=["veri", "egit"], nargs="?", default="veri")
     p.add_argument("--tur", type=int, default=1, help="veri turu numarası (1, 2, 3…)")
     p.add_argument("--veri-turu", type=int, default=1, help="eğitimde kullanılacak veri turu sayısı")
     p.add_argument("--sure-saat", type=float, default=10.5)
@@ -130,7 +144,7 @@ def main() -> None:
     p.add_argument("--epoch", type=float, default=2)
     p.add_argument("--veri-seti", nargs="*", default=[], help="kullanıcı eğitim paketi veri seti (kullanici/ad)")
     arg = p.parse_args()
-    {"baslat": baslat, "durum": durum}[arg.islem](arg)
+    {"baslat": baslat, "durum": durum, "dogrula": dogrula}[arg.islem](arg)
 
 
 if __name__ == "__main__":

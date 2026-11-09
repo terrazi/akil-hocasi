@@ -28,10 +28,15 @@ o yordamların istemleriyle ve yalnızca **programın sınamasından geçmiş** 
 - **B) Kaggle sitesinden elle:** Aşağıdaki "Adım adım" bölümü.
 
 ### A) GitHub üzerinden kurulum (bir kez)
-1. kaggle.com › sağ üstte profil › **Settings › API › Create New Token**. İnen `kaggle.json` dosyasında `username`
-   ve `key` değerleri bulunur.
+1. kaggle.com › sağ üstte profil › **Settings › API › Generate New Token**. Gösterilen anahtarı kopyalayın; yalnız
+   bir kez gösterilir. Eski arayüzde **Create Legacy API Key** düğmesi `kaggle.json` dosyası indirir; içindeki `key`
+   değerini kullanın.
 2. github.com/terrazi/akil-hocasi › **Settings › Secrets and variables › Actions › New repository secret**:
-   `KAGGLE_USERNAME` = username, `KAGGLE_KEY` = key.
+   - `KAGGLE_USERNAME`: Kaggle kullanıcı adınız (profil adresinizdeki ad: kaggle.com/**kullanıcıadı**)
+   - `KAGGLE_API_TOKEN`: kopyaladığınız anahtar (eski tür anahtarda bunun yerine `KAGGLE_KEY`)
+
+   Gizli değerleri GitHub şifreli saklar: kimse, Claude da, onları göremez; yalnız eğitim işi kullanır. Anahtarı
+   Kaggle ayarlarından istediğiniz an iptal edebilirsiniz.
 3. **Actions › Kaggle eğitimi › Run workflow**:
    - `baslat` + `veri` + tur `1`: 1. veri turu Kaggle'da başlar (~11 saat).
    - `durum` + `veri` + tur `1`: Durumu gösterir; bittiyse günlüğü ve raporu getirir.

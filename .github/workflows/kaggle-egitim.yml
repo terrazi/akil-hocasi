@@ -1,5 +1,6 @@
 # Akıl Hocası'nın yerel dil modelini Kaggle'da eğitir (GPU T4 x2). Kaggle hesabının API anahtarı gerekir:
-# depo › Settings › Secrets and variables › Actions › KAGGLE_USERNAME ve KAGGLE_KEY (kaggle.com › Settings › API).
+# depo › Settings › Secrets and variables › Actions › KAGGLE_USERNAME ve KAGGLE_API_TOKEN
+# (kaggle.com › Settings › API › Generate New Token; eski tür anahtar için KAGGLE_KEY).
 # Bir Kaggle oturumu ~11 saat sürer; bu iş defteri başlatır ("baslat") ya da durumunu/çıktısını alır ("durum").
 name: Kaggle eğitimi
 
@@ -7,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       islem:
-        description: "baslat: defteri Kaggle'da çalıştır · durum: durumu ve (bittiyse) çıktıyı al"
+        description: "dogrula: Kaggle kimliğini sına · baslat: defteri Kaggle'da çalıştır · durum: durumu ve (bittiyse) çıktıyı al"
         type: choice
-        options: [durum, baslat]
+        options: [durum, baslat, dogrula]
         default: durum
       asama:
         description: "veri: öğretmenle eğitim verisi üret (1. defter) · egit: modeli eğit ve sına (2. defter)"
@@ -49,6 +50,7 @@ jobs:
         id: kaggle
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
         run: >
           python kaggle/kaggle_api.py ${{ inputs.islem }} ${{ inputs.asama }}
