@@ -8,14 +8,14 @@ const vm = require("node:vm");
 
 const EKLENTI = path.join(__dirname, "..", "..", "gozlemci_eklenti");
 
-function ortamKur({ robots = "User-agent: *\nDisallow: /gizli/\n", uygulamaAcik = true } = {}) {
+function ortamKur({ robots = "User-agent: *\nDisallow: /gizli/\n", uygulamaAcik = true, kopru = null, motorVar = false } = {}) {
   const depo = {};
   const dinleyiciler = { mesaj: [], kaldirildi: [], alarm: [], kurulum: [], baslangic: [] };
   const gezintiler = [];
   const gonderilen = [];
   const zamanlayicilar = [];
   let sekmeNo = 0;
-  const durum = { uygulamaAcik };
+  const durum = { uygulamaAcik, kopruCagri: 0, devredilen: [] };
 
   const chrome = {
     runtime: {
@@ -24,6 +24,11 @@ function ortamKur({ robots = "User-agent: *\nDisallow: /gizli/\n", uygulamaAcik 
       onInstalled: { addListener: (f) => dinleyiciler.kurulum.push(f) },
       onStartup: { addListener: (f) => dinleyiciler.baslangic.push(f) },
       openOptionsPage: () => {},
+      sendNativeMessage: async (ad, ileti) => {
+        durum.kopruCagri += 1;
+        if (!kopru) throw new Error("Specified native messaging host not found.");
+        return kopru(ad, ileti);
+      },
     },
     storage: {
       local: {
@@ -55,6 +60,15 @@ function ortamKur({ robots = "User-agent: *\nDisallow: /gizli/\n", uygulamaAcik 
       if (!durum.uygulamaAcik) throw new TypeError("Failed to fetch");
       if (secenek.headers["X-AkilHocasi-Anahtar"] !== "anahtar") return yanit(401, {});
       if (u.pathname === "/v1/durum") return yanit(200, { ok: true, uygulama: "Akıl Hocası", surum: "0.1.0" });
+      if (u.pathname === "/v1/tara") {
+        if (!motorVar) return yanit(404, {});
+        if (secenek.method === "POST") {
+          const g = JSON.parse(secenek.body);
+          durum.devredilen.push(g);
+          return yanit(200, { ok: true, motor: true, mesaj: "Tarama sıraya alındı." });
+        }
+        return yanit(200, { etkin: { kok: "https://kalite.gop.edu.tr/", durum: "calisiyor", sayfa: 3, en_cok: 200, kuyruk: 9, sayac: { kabul: 2 } }, sirada: [] });
+      }
       if (u.pathname === "/v1/gozlem") {
         const g = JSON.parse(secenek.body);
         gonderilen.push(g);
@@ -184,7 +198,7 @@ test("kamu sistemi ve beyaz liste dışı adres taranamaz; anahtarsız başlamaz
   assert.ok((await o.komut("taramaBaslat", { url: "https://www.memurlar.net/" })).hata);
   assert.ok((await o.komut("taramaBaslat", { url: "https://ornek.com/" })).hata);
   o.depo.ayar = { anahtar: "" };
-  assert.match((await o.komut("taramaBaslat", { url: KOK })).hata, /eşleştirme anahtarı/);
+  assert.match((await o.komut("taramaBaslat", { url: KOK })).hata, /eşleşilemedi/);
   assert.equal(o.gezintiler.length, 0);
 });
 
@@ -249,4 +263,56 @@ test("robots.txt alınamazsa tarama yapılmaz", async () => {
   assert.equal(t.durum, "bitti");
   assert.equal(o.gezintiler.length, 0);
   assert.equal(t.sayac.robots, 1);
+});
+
+const KOPRU_YANITI = async (ad, ileti) => {
+  assert.equal(ad, "com.akilhocasi.gozlemci");
+  assert.equal(ileti.tur, "eslestir");
+  return { ok: true, anahtar: "anahtar", port: 47231, surum: "0.1.0", uygulama_acik: true, baslatildi: false };
+};
+const SAYFA_KAYDI = { url: "https://personel.gop.edu.tr/duyuru", baslik: "D", metin: "x".repeat(300), dosyalar: [], baglantilar: [], imza: [] };
+
+test("otomatik eşleşme: anahtar kopyalanmadan bağlanır", async () => {
+  const o = ortamKur({ kopru: KOPRU_YANITI });
+  o.depo.ayar = { pasif: true };
+  await o.mesaj({ tur: "sayfa", kayit: SAYFA_KAYDI }, { id: "ext", tab: { id: 5 } });
+  await o.bosalt();
+  assert.equal(o.durum.kopruCagri, 1);
+  assert.equal(o.depo.ayar.anahtar, "anahtar");
+  assert.equal(o.depo.durum.kopru, "eslesti");
+  assert.equal(o.gonderilen.length, 1);
+});
+
+test("anahtar değişince (401) yeniden eşleşir ve isteği tekrarlar", async () => {
+  const o = ortamKur({ kopru: KOPRU_YANITI });
+  o.depo.ayar = { anahtar: "eski-anahtar", pasif: true };
+  await o.mesaj({ tur: "sayfa", kayit: SAYFA_KAYDI }, { id: "ext", tab: { id: 5 } });
+  await o.bosalt();
+  assert.equal(o.durum.kopruCagri, 1);
+  assert.equal(o.gonderilen.length, 1);
+  assert.equal(o.depo.durum.baglanti, "bagli");
+});
+
+test("köprü kurulu değilse elle eşleştirmeye düşer", async () => {
+  const o = ortamKur({ kopru: null });
+  o.depo.ayar = { pasif: true };
+  await o.mesaj({ tur: "sayfa", kayit: SAYFA_KAYDI }, { id: "ext", tab: { id: 5 } });
+  await o.bosalt();
+  assert.equal(o.depo.durum.kopru, "yok");
+  assert.equal(o.depo.durum.baglanti, "anahtar_yok");
+  assert.equal(o.gonderilen.length, 0);
+});
+
+test("'Bu siteyi tara' programın gömülü motoruna devredilir", async () => {
+  const o = ortamKur({ kopru: KOPRU_YANITI, motorVar: true });
+  o.depo.ayar = { anahtar: "anahtar" };
+  const r = await o.komut("taramaBaslat", { url: KOK });
+  assert.equal(r.devredildi, true);
+  assert.equal(o.durum.devredilen[0].url, KOK);
+  assert.equal(o.gezintiler.length, 0);                  // eklenti sekme açmadı
+  assert.equal(o.depo.tarama, undefined);
+  const d = await o.komut("durum");
+  assert.equal(d.motor.etkin.durum, "calisiyor");
+  assert.equal((await o.komut("motorDurdur")).ok, true);
+  assert.equal(o.durum.devredilen[1].komut, "durdur");
 });

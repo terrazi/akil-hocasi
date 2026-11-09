@@ -7,6 +7,7 @@ Görevler:
   derin    günde bir, bilgisayar boştayken (48 saati geçerse beklemeden)
   haftalik üst kurum kılavuzları, Sayıştay / Danıştay / KİK kararları
   ogrenme  öz değerlendirme, öğrenen sıralayıcının eğitimi, paylaşım (günde bir, boştayken)
+  siteler  Kaynak Havuzu'ndaki resmî sitelerin gömülü tarayıcıyla taranması (haftada bir, boştayken)
 
 Kaçırılan zamanlar (bilgisayar kapalıydı) açılışta telafi edilir.
 """
@@ -23,6 +24,7 @@ GOREVLER = {
     "derin": "Derin tarama (TOGÜ siteleri, üst kurumlar, belge deposu)",
     "haftalik": "Haftalık tarama (kılavuzlar ve kararlar)",
     "ogrenme": "Öz değerlendirme ve kendi kendine eğitim",
+    "siteler": "Resmî sitelerin gömülü tarayıcıyla taranması",
 }
 
 
@@ -117,6 +119,11 @@ class Zamanlayici:
         s = son.get("ogrenme")
         if s is None or (simdi - s >= timedelta(hours=20) and (bostayken or simdi - s >= timedelta(hours=30))):
             sonuc.append("ogrenme")
+
+        # Gömülü tarayıcıyla site taraması ağır iştir: haftada bir, bilgisayar boştayken (10 günü geçerse beklemeden)
+        s = son.get("siteler")
+        if (s is None or simdi - s >= timedelta(days=7)) and (bostayken or (s is not None and simdi - s >= timedelta(days=10))):
+            sonuc.append("siteler")
 
         if olculu and self.olculu_hafif:
             sonuc = [g for g in sonuc if g in ("hafif", "sabah", "ogrenme")]

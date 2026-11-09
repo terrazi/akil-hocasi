@@ -56,9 +56,13 @@ if (-not $TesseractAtla -and -not (Test-Path (Join-Path $tess "tesseract.exe")))
 }
 
 Adim "4/7 PyInstaller (Python gömülü uygulama klasörü)"
-Remove-Item (Join-Path $Derleme "dist"), (Join-Path $Derleme "work") -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $Derleme "dist"), (Join-Path $Derleme "work"), (Join-Path $Derleme "kopru"), (Join-Path $Derleme "work_kopru") -Recurse -Force -ErrorAction SilentlyContinue
 & $vpy -m PyInstaller paketleme\akilhocasi.spec --noconfirm --distpath (Join-Path $Derleme "dist") --workpath (Join-Path $Derleme "work")
 Kontrol "PyInstaller başarısız"
+# Eklenti köprüsü: küçük konsol programı, AkilHocasi.exe'nin yanına
+& $vpy -m PyInstaller paketleme\kopru.spec --noconfirm --distpath (Join-Path $Derleme "kopru") --workpath (Join-Path $Derleme "work_kopru")
+Kontrol "Köprü derlenemedi"
+Copy-Item (Join-Path $Derleme "kopru\AkilHocasiKopru.exe") (Join-Path $Derleme "dist\AkilHocasi\") -Force
 
 Adim "5/7 Paket öz testi (gerçek Qt, ekransız)"
 $exe = Join-Path $Derleme "dist\AkilHocasi\AkilHocasi.exe"

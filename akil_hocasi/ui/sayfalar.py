@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import html
+import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QTime, QUrl, Qt, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
                                QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit,
                                QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTimeEdit,
@@ -379,7 +381,6 @@ class AyarlarSayfasi(QWidget):
     kaydedildi = Signal()
     guncelle_istendi = Signal()
     aday_model_istendi = Signal(str)
-    gozlem_degisti = Signal()
 
     def __init__(self, ayarlar, yollar, durum_bilgisi: dict, parent=None):
         super().__init__(parent)
@@ -509,9 +510,6 @@ class AyarlarSayfasi(QWidget):
         f.addRow(aday)
         izgara.addWidget(k, 2, 1)
 
-        # Tarayıcı gözlemcisi
-        izgara.addWidget(self._gozlem_karti(ayarlar, yollar), 3, 0, 1, 2)
-
         # Hakkında
         k, f = self._kart("Hakkında")
         from .. import __version__
@@ -522,7 +520,7 @@ class AyarlarSayfasi(QWidget):
         f.addRow(veri)
         f.addRow(QLabel("Program kamu sistemlerine (KBS, MYS, HYS, EBYS, e-Devlet) bağlanmaz;\n"
                         "yalnızca resmî siteleri okur ve kaynak gösterir."))
-        izgara.addWidget(k, 4, 0, 1, 2)
+        izgara.addWidget(k, 3, 0, 1, 2)
         yer.addLayout(izgara)
 
         alt = QHBoxLayout()
@@ -536,92 +534,6 @@ class AyarlarSayfasi(QWidget):
         yer.addStretch(1)
         kaydirma.setWidget(ic)
         dis.addWidget(kaydirma)
-
-    def _gozlem_karti(self, ayarlar, yollar) -> QWidget:
-        k, f = self._kart("Tarayıcı gözlemcisi (Chrome / Edge eklentisi)")
-        aciklama = QLabel("Eklenti, gezdiğiniz ya da taramasını istediğiniz herkese açık resmî sayfaları (Resmî Gazete, "
-                          "mevzuat.gov.tr, TOGÜ, YÖK, HMB, SGK...) bu programa iletir; program her sayfayı denetleyip "
-                          "sürümlü kaynak olarak kütüphaneye ekler, resmî dosyaları depoya indirir. Kamu sistemlerine "
-                          "ve giriş gerektiren sayfalara girilmez, hiçbir düğmeye tıklanmaz.")
-        aciklama.setWordWrap(True)
-        aciklama.setStyleSheet(f"color:{R['metin2']};")
-        f.addRow(aciklama)
-        self.gozlem_acik = QCheckBox("Eklentiden gelen resmî sayfaları değerlendir ve kütüphaneye ekle")
-        self.gozlem_acik.setChecked(ayarlar.al("gozlem.acik", True))
-        f.addRow(self.gozlem_acik)
-        self.gozlem_port = QSpinBox()
-        self.gozlem_port.setRange(1024, 65535)
-        self.gozlem_port.setValue(int(ayarlar.al("gozlem.port", 47231)))
-        self.gozlem_port.setToolTip("Yalnız bu bilgisayar (127.0.0.1) üzerinden dinlenir")
-        f.addRow("Yerel bağlantı noktası", self.gozlem_port)
-
-        satir = QHBoxLayout()
-        self.gozlem_anahtar = QLineEdit(ayarlar.al("gozlem.anahtar", ""))
-        self.gozlem_anahtar.setReadOnly(True)
-        self.gozlem_anahtar.setEchoMode(QLineEdit.Password)
-        satir.addWidget(self.gozlem_anahtar, 1)
-        goster = QPushButton("Göster")
-        goster.setCheckable(True)
-        goster.toggled.connect(lambda a: (self.gozlem_anahtar.setEchoMode(QLineEdit.Normal if a else QLineEdit.Password),
-                                          goster.setText("Gizle" if a else "Göster")))
-        kopyala = QPushButton("Kopyala")
-        kopyala.clicked.connect(self._anahtari_kopyala)
-        yenile = QPushButton("Yenile")
-        yenile.setToolTip("Yeni anahtar üretir; eklentiye yeniden girilmesi gerekir")
-        yenile.clicked.connect(self._anahtari_yenile)
-        for d in (goster, kopyala, yenile):
-            satir.addWidget(d)
-        kap = QWidget()
-        kap.setLayout(satir)
-        f.addRow("Eşleştirme anahtarı", kap)
-
-        dugmeler = QHBoxLayout()
-        klasor = QPushButton("  Eklenti klasörünü aç")
-        klasor.setIcon(ikon("klasor", R["metin"], 16))
-        klasor.clicked.connect(lambda: self._eklenti_klasoru(yollar))
-        nasil = QPushButton("Nasıl kurulur?")
-        nasil.clicked.connect(self._kurulum_yonergesi)
-        dugmeler.addWidget(klasor)
-        dugmeler.addWidget(nasil)
-        dugmeler.addStretch(1)
-        kap2 = QWidget()
-        kap2.setLayout(dugmeler)
-        f.addRow(kap2)
-        self.gozlem_durum = QLabel("Gözlemci durumu: başlatılıyor…")
-        self.gozlem_durum.setWordWrap(True)
-        f.addRow(self.gozlem_durum)
-        return k
-
-    def gozlem_durumu_yaz(self, metin: str) -> None:
-        self.gozlem_durum.setText(metin)
-
-    def _anahtari_kopyala(self) -> None:
-        from PySide6.QtWidgets import QApplication
-        QApplication.clipboard().setText(self.gozlem_anahtar.text())
-        self.gozlem_durum.setText("Eşleştirme anahtarı panoya kopyalandı. Eklentinin Ayarlar sayfasına yapıştırın.")
-
-    def _anahtari_yenile(self) -> None:
-        from ..gozlem.sunucu import yeni_anahtar
-        anahtar = yeni_anahtar()
-        self.ayarlar.ayarla("gozlem.anahtar", anahtar)
-        self.ayarlar.kaydet()
-        self.gozlem_anahtar.setText(anahtar)
-        self.gozlem_degisti.emit()
-        self.gozlem_durum.setText("Yeni anahtar üretildi. Eklentideki eski anahtar artık geçersiz; yenisini girin.")
-
-    def _eklenti_klasoru(self, yollar) -> None:
-        from ..gozlem.kurulum import eklentiyi_hazirla
-        hedef = eklentiyi_hazirla(yollar.kok)
-        if hedef is None:
-            self.gozlem_durum.setText("Eklenti dosyaları program paketinde bulunamadı.")
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(hedef)))
-
-    def _kurulum_yonergesi(self) -> None:
-        from PySide6.QtWidgets import QMessageBox
-
-        from ..gozlem.kurulum import YONERGE
-        QMessageBox.information(self, "Akıl Hocası Gözlemci", YONERGE)
 
     def _kart(self, baslik: str):
         kart = QFrame()
@@ -667,7 +579,437 @@ class AyarlarSayfasi(QWidget):
         a.ayarla("llm.model_yolu", self.model.text().strip())
         a.ayarla("gizlilik.maske_varsayilan", self.maske.isChecked())
         a.ayarla("gizlilik.gecmis_gun", self.gecmis.value())
+        a.kaydet()
+        self.kaydedildi.emit()
+
+
+class KaynakHavuzuSayfasi(QWidget):
+    """Kaynak havuzunun tek yönetim ekranı: gömülü tarayıcı motoru, tarayıcı eklentisi ve gözlem günlüğü."""
+
+    tara_istendi = Signal(str)
+    durdur_istendi = Signal()
+    ayarlar_degisti = Signal()
+
+    KARAR = {"kabul": ("Eklendi", R["yesil"]), "ayni": ("Güncel", R["gri"]), "tekrar": ("Tekrar", R["gri"]),
+             "liste": ("Dosya listesi", R["ana"]), "ipucu": ("İpucu", R["harcirah"]), "ret": ("Atlandı", R["sari"])}
+    MOD = {"pasif": "Eklenti (gezinti)", "aktif": "Eklenti (tarama)", "motor": "Gömülü tarayıcı"}
+
+    def __init__(self, s, parent=None):
+        super().__init__(parent)
+        self.s = s
+        self.son_temas = 0.0
+        dis = QVBoxLayout(self)
+        dis.setContentsMargins(0, 0, 0, 0)
+        kaydirma = QScrollArea()
+        kaydirma.setWidgetResizable(True)
+        ic = QWidget()
+        yer = QVBoxLayout(ic)
+        yer.setContentsMargins(32, 26, 32, 22)
+        yer.setSpacing(14)
+        _baslik(yer, "Kaynak Havuzu", "Program resmî siteleri kendi görünmez tarayıcısıyla arka planda tarar; gezdiğiniz "
+                                      "resmî sayfalar da tarayıcı eklentisiyle eklenir. Her sayfa denetlenir, sürümlenir "
+                                      "ve kaynağıyla birlikte kütüphaneye girer; resmî dosyalar Belge Deposu'na iner.")
+
+        # --- özet sayıları
+        sayilar = QHBoxLayout()
+        sayilar.setSpacing(12)
+        self.sayi: dict[str, QLabel] = {}
+        for anahtar, etiket, renk in (("belge", "kütüphanedeki belge", R["ana"]), ("bugun", "bugün eklenen sayfa", R["yesil"]),
+                                      ("dosya", "indirilmeyi bekleyen dosya", R["maas"]), ("ipucu", "ikincil site ipucu", R["harcirah"])):
+            kart = QFrame()
+            kart.setObjectName("Kart")
+            k = QVBoxLayout(kart)
+            k.setContentsMargins(16, 12, 16, 12)
+            sayi = QLabel("0")
+            sayi.setStyleSheet(f"font-size:24px; font-weight:700; color:{renk};")
+            k.addWidget(sayi)
+            e = QLabel(etiket)
+            e.setObjectName("Ikincil")
+            k.addWidget(e)
+            self.sayi[anahtar] = sayi
+            sayilar.addWidget(kart, 1)
+        yer.addLayout(sayilar)
+
+        izgara = QGridLayout()
+        izgara.setSpacing(14)
+        izgara.addWidget(self._motor_karti(), 0, 0)
+        izgara.addWidget(self._eklenti_karti(), 0, 1)
+        izgara.setColumnStretch(0, 3)
+        izgara.setColumnStretch(1, 2)
+        yer.addLayout(izgara)
+        yer.addWidget(self._gunluk_karti())
+        yer.addStretch(1)
+        kaydirma.setWidget(ic)
+        dis.addWidget(kaydirma)
+        self.yenile()
+
+    # ------------------------------------------------------------------ kartlar
+    def _kart(self, baslik: str, alt: str = ""):
+        kart = QFrame()
+        kart.setObjectName("AyarKart")
+        yer = QVBoxLayout(kart)
+        yer.setContentsMargins(18, 14, 18, 16)
+        yer.setSpacing(10)
+        b = QLabel(baslik)
+        b.setStyleSheet("font-size:15px; font-weight:700;")
+        yer.addWidget(b)
+        if alt:
+            a = QLabel(alt)
+            a.setWordWrap(True)
+            a.setStyleSheet(f"color:{R['metin2']};")
+            yer.addWidget(a)
+        return kart, yer
+
+    def _motor_karti(self) -> QWidget:
+        from PySide6.QtWidgets import QProgressBar
+        kart, yer = self._kart("Gömülü tarayıcı", "Bilgisayardaki Edge ya da Chrome görünmez çalışır; her tarama çerezsiz, "
+                                                  "oturumsuz, geçici bir profille yapılır ve hiçbir düğmeye tıklanmaz. "
+                                                  "Listedeki siteler haftada bir, bilgisayar boştayken kendiliğinden taranır.")
+        self.motor_durum = QLabel()
+        self.motor_durum.setWordWrap(True)
+        yer.addWidget(self.motor_durum)
+        self.ilerleme = QProgressBar()
+        self.ilerleme.setRange(0, 100)
+        self.ilerleme.setTextVisible(False)
+        self.ilerleme.setFixedHeight(8)
+        yer.addWidget(self.ilerleme)
+        self.ilerleme_metni = QLabel()
+        self.ilerleme_metni.setObjectName("Ikincil")
+        self.ilerleme_metni.setWordWrap(True)
+        yer.addWidget(self.ilerleme_metni)
+
+        self.site_tablosu = QTableWidget(0, 3)
+        self.site_tablosu.setHorizontalHeaderLabels(["Site", "Son tarama", "Sonuç"])
+        self.site_tablosu.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.site_tablosu.verticalHeader().setVisible(False)
+        self.site_tablosu.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.site_tablosu.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.site_tablosu.setShowGrid(False)
+        self.site_tablosu.setAlternatingRowColors(True)
+        self.site_tablosu.setMinimumHeight(190)
+        yer.addWidget(self.site_tablosu)
+
+        ekle = QHBoxLayout()
+        self.yeni_site = QLineEdit()
+        self.yeni_site.setPlaceholderText("https://birim.gop.edu.tr/ (yalnız beyaz listedeki resmî siteler)")
+        self.yeni_site.returnPressed.connect(self._site_ekle)
+        ekle.addWidget(self.yeni_site, 1)
+        d = QPushButton("  Ekle")
+        d.setIcon(ikon("arti", R["metin"], 16))
+        d.clicked.connect(self._site_ekle)
+        ekle.addWidget(d)
+        yer.addLayout(ekle)
+
+        dugmeler = QHBoxLayout()
+        tumu = QPushButton("  Tümünü şimdi tara")
+        tumu.setObjectName("Birincil")
+        tumu.setIcon(ikon("yenile", "#FFFFFF", 16))
+        tumu.clicked.connect(self._tumunu_tara)
+        secili = QPushButton("Seçiliyi tara")
+        secili.clicked.connect(self._secili_tara)
+        kaldir = QPushButton("Kaldır")
+        kaldir.clicked.connect(self._site_kaldir)
+        self.durdur = QPushButton("  Durdur")
+        self.durdur.setIcon(ikon("dur", R["kirmizi"], 16))
+        self.durdur.setToolTip("Taramayı duraklatır; yeniden başlatınca kaldığı yerden sürer")
+        self.durdur.clicked.connect(self.durdur_istendi.emit)
+        for w in (tumu, secili, kaldir):
+            dugmeler.addWidget(w)
+        dugmeler.addStretch(1)
+        dugmeler.addWidget(self.durdur)
+        yer.addLayout(dugmeler)
+
+        f = QFormLayout()
+        f.setHorizontalSpacing(14)
+        a = self.s.ayarlar
+        self.hiz = QComboBox()
+        for anahtar, metin in (("yavas", "Yavaş (~6 sn/sayfa, siteyi en az yorar)"), ("normal", "Normal (~3 sn/sayfa)"),
+                               ("hizli", "Hızlı (~1,5 sn/sayfa)")):
+            self.hiz.addItem(metin, anahtar)
+        self.hiz.setCurrentIndex(max(0, ["yavas", "normal", "hizli"].index(a.al("gozlem.motor.hiz", "normal"))
+                                     if a.al("gozlem.motor.hiz", "normal") in ("yavas", "normal", "hizli") else 1))
+        self.en_cok = QSpinBox()
+        self.en_cok.setRange(10, 5000)
+        self.en_cok.setValue(int(a.al("gozlem.motor.en_cok_sayfa", 200)))
+        self.derinlik = QSpinBox()
+        self.derinlik.setRange(0, 10)
+        self.derinlik.setValue(int(a.al("gozlem.motor.derinlik", 4)))
+        self.tarayici_yolu = QLineEdit(a.al("gozlem.motor.tarayici_yolu", ""))
+        self.tarayici_yolu.setPlaceholderText("Boş bırakın: Edge, yoksa Chrome kendiliğinden bulunur")
+        f.addRow("Hız", self.hiz)
+        f.addRow("Site başına en çok sayfa", self.en_cok)
+        f.addRow("Bağlantı derinliği", self.derinlik)
+        f.addRow("Tarayıcı yolu", self.tarayici_yolu)
+        yer.addLayout(f)
+        kaydet = QPushButton("  Tarama ayarlarını kaydet")
+        kaydet.setIcon(ikon("onay", R["metin"], 16))
+        kaydet.clicked.connect(self._ayarlari_kaydet)
+        yer.addWidget(kaydet, 0, Qt.AlignLeft)
+        return kart
+
+    def _eklenti_karti(self) -> QWidget:
+        kart, yer = self._kart("Tarayıcı eklentisi (isteğe bağlı)", "Gezdiğiniz resmî sayfaları da havuza ekler. Kurulum "
+                                                                     "eklentiyi programla kendiliğinden eşleştirir; anahtar "
+                                                                     "kopyalamanız gerekmez.")
+        self.eklenti_durum = QLabel()
+        self.eklenti_durum.setWordWrap(True)
+        yer.addWidget(self.eklenti_durum)
+        self.gozlem_acik = QCheckBox("Eklentiden gelen resmî sayfaları değerlendir")
+        self.gozlem_acik.setChecked(self.s.ayarlar.al("gozlem.acik", True))
+        self.gozlem_acik.toggled.connect(self._ayarlari_kaydet)
+        yer.addWidget(self.gozlem_acik)
+        satir = QHBoxLayout()
+        klasor = QPushButton("  Eklenti klasörü")
+        klasor.setIcon(ikon("klasor", R["metin"], 16))
+        klasor.clicked.connect(self._eklenti_klasoru)
+        nasil = QPushButton("Nasıl kurulur?")
+        nasil.clicked.connect(self._kurulum_yonergesi)
+        satir.addWidget(klasor)
+        satir.addWidget(nasil)
+        satir.addStretch(1)
+        yer.addLayout(satir)
+
+        b = QLabel("Elle eşleştirme (köprü kurulu değilse)")
+        b.setObjectName("Ikincil")
+        yer.addWidget(b)
+        anahtar = QHBoxLayout()
+        self.gozlem_anahtar = QLineEdit(self.s.ayarlar.al("gozlem.anahtar", ""))
+        self.gozlem_anahtar.setReadOnly(True)
+        self.gozlem_anahtar.setEchoMode(QLineEdit.Password)
+        anahtar.addWidget(self.gozlem_anahtar, 1)
+        kopyala = QPushButton("Kopyala")
+        kopyala.clicked.connect(self._anahtari_kopyala)
+        yenile = QPushButton("Yenile")
+        yenile.setToolTip("Yeni anahtar üretir; eklenti köprüyle yenisini kendiliğinden alır")
+        yenile.clicked.connect(self._anahtari_yenile)
+        anahtar.addWidget(kopyala)
+        anahtar.addWidget(yenile)
+        yer.addLayout(anahtar)
+        f = QFormLayout()
+        self.gozlem_port = QSpinBox()
+        self.gozlem_port.setRange(1024, 65535)
+        self.gozlem_port.setValue(int(self.s.ayarlar.al("gozlem.port", 47231)))
+        self.gozlem_port.setToolTip("Yalnız bu bilgisayar (127.0.0.1) üzerinden dinlenir")
+        f.addRow("Yerel bağlantı noktası", self.gozlem_port)
+        yer.addLayout(f)
+        self.gozlem_bilgi = QLabel()
+        self.gozlem_bilgi.setWordWrap(True)
+        self.gozlem_bilgi.setObjectName("Ikincil")
+        yer.addWidget(self.gozlem_bilgi)
+        yer.addStretch(1)
+        return kart
+
+    def _gunluk_karti(self) -> QWidget:
+        kart, yer = self._kart("Son gözlemler")
+        self.gunluk_turu = SegmentSecici([("kayit", "Gözlem günlüğü"), ("ipucu", "İkincil site ipuçları")], "kayit")
+        self.gunluk_turu.degisti.connect(lambda _: self.gunlugu_yenile())
+        yer.addWidget(self.gunluk_turu, 0, Qt.AlignLeft)
+        self.gunluk = QTableWidget(0, 5)
+        self.gunluk.verticalHeader().setVisible(False)
+        self.gunluk.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.gunluk.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.gunluk.setShowGrid(False)
+        self.gunluk.setAlternatingRowColors(True)
+        self.gunluk.setMinimumHeight(260)
+        self.gunluk.doubleClicked.connect(self._gunluk_ac)
+        yer.addWidget(self.gunluk)
+        return kart
+
+    # ------------------------------------------------------------------ yenileme
+    def yenile(self) -> None:
+        k = self.s.kutuphane
+        ist = k.istatistik()
+        g = self.s.gozlem.istatistik()
+        self.sayi["belge"].setText(f"{ist['belge']:,}".replace(",", "."))
+        self.sayi["bugun"].setText(str(g["bugun"].get("kabul", 0)))
+        self.sayi["dosya"].setText(str(self.s.dosya_kuyrugu.bekleyen() if self.s.dosya_kuyrugu else 0))
+        self.sayi["ipucu"].setText(str(g["ipucu"]))
+        self.motor_durumu(self.s.motor.durum() if self.s.motor else {})
+        self._siteleri_yenile()
+        self._eklenti_durumunu_yenile()
+        self.gunlugu_yenile()
+
+    def motor_durumu(self, d: dict) -> None:
+        motor = self.s.motor
+        yol = motor.tarayici_yolu() if motor else ""
+        if not yol:
+            self.motor_durum.setText(f"<span style='color:{R['kirmizi']};'>Bilgisayarda Edge ya da Chrome bulunamadı.</span> "
+                                     "Aşağıdan tarayıcı yolunu belirtebilirsiniz; eklenti yine çalışır.")
+        else:
+            ad = "Microsoft Edge" if "msedge" in yol.lower() or "edge" in yol.lower() else "Google Chrome"
+            surum = d.get("tarayici") or ""
+            self.motor_durum.setText(f"<b>Hazır</b> · {ad}" + (f" ({html.escape(surum)})" if surum else "")
+                                     + (f"<br><span style='color:{R['kirmizi']};'>{html.escape(d['son_hata'])}</span>"
+                                        if d.get("son_hata") else ""))
+        e = d.get("etkin")
+        sirada = d.get("sirada") or []
+        if e and e.get("durum") == "calisiyor":
+            sc = e.get("sayac", {})
+            self.ilerleme.setValue(min(100, int(100 * e["sayfa"] / max(1, e["en_cok"]))))
+            self.ilerleme_metni.setText(
+                f"<b>{html.escape(e['kok'])}</b> taranıyor: {e['sayfa']}/{e['en_cok']} sayfa · sırada {e['kuyruk']} bağlantı · "
+                f"eklenen {sc.get('kabul', 0)} · güncel {sc.get('ayni', 0) + sc.get('tekrar', 0)} · dosya {sc.get('dosya', 0)}"
+                + (f" · {len(sirada)} site daha bekliyor" if sirada else ""))
+            self.durdur.setEnabled(True)
+        else:
+            self.ilerleme.setValue(0)
+            if e:
+                sc = e.get("sayac", {})
+                self.ilerleme_metni.setText(f"Son tarama: {html.escape(e['kok'])} · {e['sayfa']} sayfa, {sc.get('kabul', 0)} "
+                                            f"yeni kaynak · {html.escape(e.get('neden', ''))}")
+            else:
+                self.ilerleme_metni.setText("Şu an tarama yok. Listedeki siteler boştayken kendiliğinden taranır.")
+            self.durdur.setEnabled(bool(sirada))
+
+    def _siteleri_yenile(self) -> None:
+        siteler = list(self.s.ayarlar.al("gozlem.motor.siteler", []) or [])
+        gecmis = {g["kok"]: g for g in (self.s.motor.gecmis(200) if self.s.motor else [])}
+        self.site_tablosu.setRowCount(len(siteler))
+        for i, site in enumerate(siteler):
+            g = gecmis.get(site)
+            son = _tarih(g["bitis"] or g["baslangic"]) if g else "—"
+            if g and g["durum"] == "calisiyor":
+                sonuc = "Taranıyor…"
+            elif g:
+                sc = g.get("sayac", {})
+                sonuc = f"{g['sayfa']} sayfa · {sc.get('kabul', 0)} yeni" + (" · duraklatıldı" if g["durum"] == "duraklatildi" else "")
+            else:
+                sonuc = "Henüz taranmadı"
+            for j, metin in enumerate((site, son, sonuc)):
+                self.site_tablosu.setItem(i, j, QTableWidgetItem(metin))
+
+    def _eklenti_durumunu_yenile(self) -> None:
+        from ..gozlem.eslestirme import yerel_mesajlasma_durumu
+        kayit = yerel_mesajlasma_durumu()
+        parcalar = []
+        if kayit:
+            hazir = [t for t, v in kayit.items() if v and t != "Chromium"]
+            parcalar.append("Köprü: " + (", ".join(hazir) + " için kayıtlı" if hazir else
+                                         f"<span style='color:{R['sari']};'>kayıtlı değil (programı yeniden kurun)</span>"))
+        if self.son_temas and time.time() - self.son_temas < 600:
+            parcalar.append(f"<span style='color:{R['yesil']};'>Eklenti bağlı</span> · son temas "
+                            f"{datetime.fromtimestamp(self.son_temas):%H:%M}")
+        else:
+            parcalar.append("Eklenti son 10 dakikada bağlanmadı (kurulu değilse \"Nasıl kurulur?\")")
+        self.eklenti_durum.setText("<br>".join(parcalar))
+
+    def gunlugu_yenile(self) -> None:
+        db = self.s.kutuphane.db
+        if self.gunluk_turu.secili == "ipucu":
+            satirlar = db.execute("SELECT zaman, baslik, sorular, url FROM gozlem_ipucu ORDER BY zaman DESC LIMIT 200").fetchall()
+            self.gunluk.setColumnCount(4)
+            self.gunluk.setHorizontalHeaderLabels(["Zaman", "Başlık", "Soru ipuçları", "Adres"])
+            self.gunluk.setRowCount(len(satirlar))
+            for i, r in enumerate(satirlar):
+                sorular = json.loads(r["sorular"] or "[]")
+                for j, metin in enumerate((_tarih(r["zaman"]), r["baslik"], " · ".join(sorular[:3]), r["url"])):
+                    self.gunluk.setItem(i, j, QTableWidgetItem(metin))
+            self.gunluk.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            return
+        satirlar = db.execute("SELECT zaman, mod, url, karar, neden FROM gozlem_kayit ORDER BY id DESC LIMIT 200").fetchall()
+        self.gunluk.setColumnCount(5)
+        self.gunluk.setHorizontalHeaderLabels(["Zaman", "Kaynak", "Adres", "Karar", "Açıklama"])
+        self.gunluk.setRowCount(len(satirlar))
+        for i, r in enumerate(satirlar):
+            etiket, renk = self.KARAR.get(r["karar"], (r["karar"], R["soluk"]))
+            ogeler = (_tarih(r["zaman"]), self.MOD.get(r["mod"], r["mod"] or "—"), r["url"], etiket, r["neden"])
+            for j, metin in enumerate(ogeler):
+                oge = QTableWidgetItem(metin)
+                if j == 3:
+                    oge.setForeground(QColor(renk))
+                self.gunluk.setItem(i, j, oge)
+        self.gunluk.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+
+    def eklenti_temas(self, zaman: float) -> None:
+        self.son_temas = zaman
+        self._eklenti_durumunu_yenile()
+
+    def gozlem_durumu_yaz(self, metin: str) -> None:
+        self.gozlem_bilgi.setText(metin)
+
+    # ------------------------------------------------------------------ eylemler
+    def _siteler(self) -> list[str]:
+        return list(self.s.ayarlar.al("gozlem.motor.siteler", []) or [])
+
+    def _site_ekle(self) -> None:
+        from ..crawler import beyaz_liste
+        from ..gozlem.degerlendirici import sistem_mi
+        from ..gozlem.motor import kok_adres
+        kok = kok_adres(self.yeni_site.text())
+        if not kok or not beyaz_liste.birincil_mi(kok) or sistem_mi(kok):
+            self.gozlem_durumu_yaz("Bu adres eklenemez: yalnız beyaz listedeki herkese açık resmî siteler taranır; "
+                                   "kamu sistemleri ve giriş sayfaları taranmaz.")
+            return
+        siteler = self._siteler()
+        if kok not in siteler:
+            siteler.append(kok)
+            self.s.ayarlar.ayarla("gozlem.motor.siteler", siteler)
+            self.s.ayarlar.kaydet()
+        self.yeni_site.clear()
+        self._siteleri_yenile()
+
+    def _secili_siteler(self) -> list[str]:
+        siteler = self._siteler()
+        satirlar = sorted({i.row() for i in self.site_tablosu.selectedIndexes()})
+        return [siteler[r] for r in satirlar if 0 <= r < len(siteler)]
+
+    def _site_kaldir(self) -> None:
+        secili = set(self._secili_siteler())
+        if not secili:
+            return
+        self.s.ayarlar.ayarla("gozlem.motor.siteler", [x for x in self._siteler() if x not in secili])
+        self.s.ayarlar.kaydet()
+        self._siteleri_yenile()
+
+    def _secili_tara(self) -> None:
+        for site in self._secili_siteler():
+            self.tara_istendi.emit(site)
+
+    def _tumunu_tara(self) -> None:
+        for site in self._siteler():
+            self.tara_istendi.emit(site)
+
+    def _ayarlari_kaydet(self, *_) -> None:
+        a = self.s.ayarlar
+        a.ayarla("gozlem.motor.hiz", self.hiz.currentData() or "normal")
+        a.ayarla("gozlem.motor.en_cok_sayfa", self.en_cok.value())
+        a.ayarla("gozlem.motor.derinlik", self.derinlik.value())
+        a.ayarla("gozlem.motor.tarayici_yolu", self.tarayici_yolu.text().strip())
         a.ayarla("gozlem.acik", self.gozlem_acik.isChecked())
         a.ayarla("gozlem.port", self.gozlem_port.value())
         a.kaydet()
-        self.kaydedildi.emit()
+        self.ayarlar_degisti.emit()
+
+    def _anahtari_kopyala(self) -> None:
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(self.gozlem_anahtar.text())
+        self.gozlem_durumu_yaz("Anahtar panoya kopyalandı (yalnız köprü kurulu değilse eklentiye elle girilir).")
+
+    def _anahtari_yenile(self) -> None:
+        from ..gozlem.eslestirme import yeni_anahtar
+        anahtar = yeni_anahtar()
+        self.s.ayarlar.ayarla("gozlem.anahtar", anahtar)
+        self.s.ayarlar.kaydet()
+        self.gozlem_anahtar.setText(anahtar)
+        self.ayarlar_degisti.emit()
+        self.gozlem_durumu_yaz("Yeni anahtar üretildi. Eklenti köprüyle yenisini kendiliğinden alır.")
+
+    def _eklenti_klasoru(self) -> None:
+        from ..gozlem.kurulum import eklentiyi_hazirla
+        hedef = eklentiyi_hazirla(self.s.yollar.kok)
+        if hedef is None:
+            self.gozlem_durumu_yaz("Eklenti dosyaları program paketinde bulunamadı.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(hedef)))
+
+    def _kurulum_yonergesi(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        from ..gozlem.kurulum import YONERGE
+        QMessageBox.information(self, "Akıl Hocası Gözlemci", YONERGE)
+
+    def _gunluk_ac(self, indeks) -> None:
+        sutun = 3 if self.gunluk.columnCount() == 4 else 2
+        oge = self.gunluk.item(indeks.row(), sutun)
+        if oge and oge.text().startswith("http"):
+            QDesktopServices.openUrl(QUrl(oge.text()))

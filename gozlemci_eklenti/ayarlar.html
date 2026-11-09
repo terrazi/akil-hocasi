@@ -13,12 +13,16 @@
   </div>
   <main>
     <section class="kart">
-      <h2>Eşleştirme</h2>
-      <p class="bilgi">Akıl Hocası'nı açın: <b>Ayarlar → Tarayıcı gözlemcisi</b> bölümündeki <b>eşleştirme anahtarını</b> kopyalayıp aşağıya yapıştırın. Veriler yalnızca bu bilgisayardaki uygulamaya gider; internete gönderilmez.</p>
-      <div class="alan"><label for="anahtar">Eşleştirme anahtarı</label><input id="anahtar" type="password" autocomplete="off" spellcheck="false" placeholder="Uygulamadan kopyalayın"></div>
-      <div class="alan"><label for="port">Yerel bağlantı noktası</label><input id="port" type="number" min="1024" max="65535"></div>
-      <div class="dugmeler"><button id="kaydet">Kaydet ve bağlantıyı sına</button></div>
+      <div class="satir"><h2>Eşleşme</h2><span id="eslesme" class="rozet notr">Denetleniyor</span></div>
+      <p class="bilgi">Eklenti, bu bilgisayardaki Akıl Hocası ile <b>kendiliğinden eşleşir</b>; anahtar kopyalamanız gerekmez. Veriler yalnızca bu bilgisayardaki programa gider; internete gönderilmez.</p>
+      <div class="dugmeler"><button id="yenidenEslestir">Yeniden eşleştir</button></div>
       <p class="soluk" id="sonuc"></p>
+      <details>
+        <summary class="soluk">Elle eşleştirme (köprü kurulu değilse)</summary>
+        <div class="alan"><label for="anahtar">Eşleştirme anahtarı</label><input id="anahtar" type="password" autocomplete="off" spellcheck="false" placeholder="Akıl Hocası › Kaynak Havuzu › Eklenti"></div>
+        <div class="alan"><label for="port">Yerel bağlantı noktası</label><input id="port" type="number" min="1024" max="65535"></div>
+        <div class="dugmeler"><button id="kaydet">Kaydet ve bağlantıyı sına</button></div>
+      </details>
     </section>
 
     <section class="kart">
@@ -44,6 +48,7 @@
         <li>TC kimlik no, IBAN, kart numarası ve cep telefonunu göndermeden önce maskeler.</li>
         <li>memurlar.net gibi ikincil sitelerden içerik kopyalamaz; yalnız başlık ve soru ipucu alır.</li>
         <li>Akıl Hocası gelen her sayfayı ayrıca denetler, sürümler ve kaynağıyla birlikte saklar.</li>
+        <li>"Bu siteyi tara" işi Akıl Hocası'nın kendi görünmez tarayıcısına devredilir: çerezsiz, oturumsuz, geçici bir profille arka planda tarar; tarayıcınızı kapatsanız da sürer.</li>
       </ul>
     </section>
   </main>

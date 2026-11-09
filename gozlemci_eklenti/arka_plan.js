@@ -1,8 +1,9 @@
 /* Akıl Hocası Gözlemci — arka plan çalışanı.
+ * Eşleşme: kurulumun kaydettiği yerel köprüyle (native messaging) program kendiliğinden eşleşir; anahtar kopyalanmaz.
  * Pasif gözlem: kullanıcının gezdiği beyaz listedeki herkese açık resmî sayfaları uygulamaya iletir.
- * Aktif tarama: seçilen resmî sitede arka plan sekmesinde, yalnız aynı alandaki bağlantıları izleyerek
- * okur (tıklama, form, giriş yok); hız profili, robots.txt, yapı benzerliği süzgeci, durdur/devam.
- * Veri yalnızca bu bilgisayardaki Akıl Hocası uygulamasına (127.0.0.1) gider.
+ * Site taraması: önce programın gömülü tarama motoruna devredilir (görünmez tarayıcı, yalıtılmış profil);
+ * motor yoksa eklenti arka plan sekmesinde, yalnız aynı alandaki bağlantıları izleyerek tarar.
+ * Hiçbir yolda tıklama, form, giriş yoktur. Veri yalnızca bu bilgisayardaki Akıl Hocası'na (127.0.0.1) gider.
  */
 "use strict";
 importScripts("kurallar.js");
@@ -10,6 +11,8 @@ const K = self.AHKurallar;
 
 const VARSAYILAN = { port: 47231, anahtar: "", pasif: true, hiz: "normal", enCokSayfa: 200, enCokDerinlik: 4 };
 const ZAMAN_ASIMI = 25000;
+const YEREL_KOPRU = "com.akilhocasi.gozlemci";
+const ESLESME_ARALIGI = 60000;
 
 // ------------------------------------------------------------------ yardımcılar
 let kilit = Promise.resolve();
@@ -59,13 +62,33 @@ async function rozet() {
   }
 }
 
-// ------------------------------------------------------------------ uygulama bağlantısı
-async function api(yol, govde) {
-  const a = await ayarlar();
-  if (!a.anahtar) {
-    await durumGuncelle((d) => { d.baglanti = "anahtar_yok"; });
-    return null;
+// ------------------------------------------------------------------ eşleşme (yerel köprü)
+let sonEslesme = 0;
+
+/** Programla kendiliğinden eşleşir. baslat=true ise program kapalıysa tepside açtırır. */
+async function otomatikEslestir(baslat = false, zorla = false) {
+  if (!zorla && Date.now() - sonEslesme < ESLESME_ARALIGI) return false;
+  sonEslesme = Date.now();
+  let y = null;
+  try {
+    y = await chrome.runtime.sendNativeMessage(YEREL_KOPRU, { tur: "eslestir", baslat });
+  } catch (_) {
+    await durumGuncelle((d) => { d.kopru = "yok"; d.kopruNotu = ""; });
+    return false;
   }
+  if (!y || !y.ok) {
+    await durumGuncelle((d) => { d.kopru = "red"; d.kopruNotu = (y && y.hata) || ""; });
+    return false;
+  }
+  const a = await ayarlar();
+  await chrome.storage.local.set({ ayar: { ...a, anahtar: y.anahtar, port: y.port, otomatik: true } });
+  await durumGuncelle((d) => { d.kopru = "eslesti"; d.kopruNotu = ""; d.surum = y.surum; });
+  if (y.baslatildi) await new Promise((r) => setTimeout(r, 5000));      // program tepside açılıyor
+  return true;
+}
+
+// ------------------------------------------------------------------ uygulama bağlantısı
+async function istek(a, yol, govde) {
   try {
     const r = await fetch(`http://127.0.0.1:${a.port}${yol}`, {
       method: govde ? "POST" : "GET",
@@ -73,21 +96,46 @@ async function api(yol, govde) {
       body: govde ? JSON.stringify(govde) : undefined,
       cache: "no-store",
     });
-    if (r.status === 401) {
-      await durumGuncelle((d) => { d.baglanti = "anahtar_hatali"; });
-      return null;
-    }
-    if (!r.ok) {
-      await durumGuncelle((d) => { d.baglanti = "bagli"; say(d, "hata"); });
-      return null;
-    }
-    const j = await r.json();
-    await durumGuncelle((d) => { d.baglanti = "bagli"; d.sonTemas = Date.now(); if (j.surum) d.surum = j.surum; });
-    return j;
+    if (!r.ok) return { durum: r.status, veri: null };
+    return { durum: r.status, veri: await r.json() };
   } catch (_) {
+    return { durum: 0, veri: null };
+  }
+}
+
+/** Uygulamaya istek. Anahtar yoksa, değiştiyse (401) ya da program kapalıysa önce kendiliğinden eşleşir.
+ *  baslat=true yalnız kullanıcı eylemlerinde (site taraması) programı tepside açtırır. */
+async function api(yol, govde, baslat = false) {
+  let a = await ayarlar();
+  if (!a.anahtar) {
+    await otomatikEslestir(baslat);
+    a = await ayarlar();
+    if (!a.anahtar) {
+      await durumGuncelle((d) => { d.baglanti = "anahtar_yok"; });
+      return null;
+    }
+  }
+  let r = await istek(a, yol, govde);
+  if (r.durum === 401 || (r.durum === 0 && baslat)) {
+    if (await otomatikEslestir(baslat, baslat)) {
+      a = await ayarlar();
+      r = await istek(a, yol, govde);
+    }
+  }
+  if (r.durum === 401) {
+    await durumGuncelle((d) => { d.baglanti = "anahtar_hatali"; });
+    return null;
+  }
+  if (r.durum === 0) {
     await durumGuncelle((d) => { d.baglanti = "kapali"; });
     return null;
   }
+  if (!r.veri) {
+    await durumGuncelle((d) => { d.baglanti = "bagli"; say(d, "hata"); });
+    return null;
+  }
+  await durumGuncelle((d) => { d.baglanti = "bagli"; d.sonTemas = Date.now(); if (r.veri.surum) d.surum = r.veri.surum; });
+  return r.veri;
 }
 
 async function kurallariYenile() {
@@ -179,8 +227,14 @@ async function taramaBaslat(adres0) {
   if (!adres || !K.birincilMi(adres) || K.sistemMi(adres)) {
     return { hata: "Bu adres taranamaz. Yalnız beyaz listedeki herkese açık resmî siteler taranır; kamu sistemleri ve giriş sayfaları taranmaz." };
   }
+  const devir = await api("/v1/tara", { url: adres }, true);
+  if (devir && devir.motor) {
+    if (!devir.ok) return { hata: devir.mesaj };
+    return { ok: true, devredildi: true, mesaj: devir.mesaj };
+  }
+  // Programın motoru kullanılamıyorsa eklenti kendisi tarar
   const a = await ayarlar();
-  if (!a.anahtar) return { hata: "Önce Ayarlar bölümüne Akıl Hocası'ndaki eşleştirme anahtarını girin." };
+  if (!a.anahtar) return { hata: "Akıl Hocası ile eşleşilemedi. Programın kurulu ve açık olduğundan emin olun." };
   const durum = await kurallariYenile();
   if (!durum) return { hata: "Akıl Hocası uygulamasına ulaşılamadı. Uygulamanın açık olduğundan emin olun." };
   if (!K.birincilMi(adres) || K.sistemMi(adres)) return { hata: "Bu adres uygulamanın güncel kurallarına göre taranamaz." };
@@ -313,10 +367,15 @@ chrome.tabs.onRemoved.addListener((sekmeNo) => {
 async function komut(m) {
   switch (m.komut) {
     case "durum": {
+      const motor = await api("/v1/tara");
       const { durum, tarama } = await chrome.storage.local.get(["durum", "tarama"]);
       const a = await ayarlar();
-      return { durum: durum || {}, tarama: tarama ? { ...tarama, gorulen: undefined, gecmis: undefined, robots: undefined, kuyrukSayisi: tarama.kuyruk.length, kuyruk: undefined } : null, ayar: { ...a, anahtar: a.anahtar ? "ayarlı" : "" } };
+      return { durum: durum || {}, motor, tarama: tarama ? { ...tarama, gorulen: undefined, gecmis: undefined, robots: undefined, kuyrukSayisi: tarama.kuyruk.length, kuyruk: undefined } : null, ayar: { ...a, anahtar: a.anahtar ? "ayarlı" : "" } };
     }
+    case "eslestir":
+      return { ok: await otomatikEslestir(true, true) };
+    case "motorDurdur":
+      return (await api("/v1/tara", { komut: "durdur" })) || { ok: false };
     case "sina":
       return { sonuc: await kurallariYenile() };
     case "pasif": {
@@ -366,13 +425,16 @@ async function komut(m) {
 // ------------------------------------------------------------------ yaşam döngüsü
 chrome.runtime.onInstalled.addListener(async (ayrinti) => {
   chrome.alarms.create("nabiz", { periodInMinutes: 1 });
-  if (ayrinti.reason === "install") chrome.runtime.openOptionsPage();
+  const eslesti = await otomatikEslestir(false, true);
+  if (eslesti) await kurallariYenile();
+  else if (ayrinti.reason === "install") chrome.runtime.openOptionsPage();   // köprü yoksa elle eşleştirme
   await rozet();
 });
 
-chrome.runtime.onStartup.addListener(() => {
+chrome.runtime.onStartup.addListener(async () => {
   chrome.alarms.create("nabiz", { periodInMinutes: 1 });
-  kurallariYenile();
+  await otomatikEslestir(false, true);
+  await kurallariYenile();
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {

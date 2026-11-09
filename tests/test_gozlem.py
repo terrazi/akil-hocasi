@@ -162,3 +162,46 @@ def test_sunucu_gozlem_alir(sunucu):
     assert kod == 200 and veri["karar"] == "kabul" and veri["kuyruga_alinan"] == 0
     kod, veri, _ = _istek(sunucu, "/v1/gozlem", {"url": "https://www.turkiye.gov.tr/x", "metin": SAYFA_METNI})
     assert kod == 200 and veri["karar"] == "ret"
+
+
+class SahteMotor:
+    def __init__(self):
+        self.eklenen, self.durduruldu = [], False
+
+    def tarayici_yolu(self):
+        return "/usr/bin/sahte-tarayici"
+
+    def ekle(self, url):
+        if "ebys" in url:
+            return False, "Yalnız beyaz listedeki herkese açık resmî siteler taranır"
+        self.eklenen.append(url)
+        return True, "Tarama sıraya alındı."
+
+    def durdur(self):
+        self.durduruldu = True
+
+    def durum(self):
+        return {"etkin": None, "sirada": list(self.eklenen)}
+
+
+def test_sunucu_taramayi_motora_devreder(d):
+    motor = SahteMotor()
+    s = GozlemSunucusu(d, anahtar="gizli-anahtar", port=_bos_port(), motor=motor)
+    assert s.baslat()
+    try:
+        kod, veri, _ = _istek(s, "/v1/tara", {"url": "https://kalite.gop.edu.tr/"})
+        assert kod == 200 and veri == {"ok": True, "motor": True, "mesaj": "Tarama sıraya alındı."}
+        assert not _istek(s, "/v1/tara", {"url": "https://ebys.gop.edu.tr/"})[1]["ok"]
+        kod, veri, _ = _istek(s, "/v1/tara")
+        assert veri["sirada"] == ["https://kalite.gop.edu.tr/"]
+        assert _istek(s, "/v1/tara", {"komut": "durdur"})[1]["ok"] and motor.durduruldu
+        assert _istek(s, "/v1/durum")[1]["motor"] is True
+        assert s.son_temas > 0
+        assert _istek(s, "/v1/tara", {"url": "https://kalite.gop.edu.tr/"}, anahtar="yanlis")[0] == 401
+    finally:
+        s.durdur()
+
+
+def test_sunucu_motorsuz_eklentiye_birakir(sunucu):
+    kod, veri, _ = _istek(sunucu, "/v1/tara", {"url": "https://kalite.gop.edu.tr/"})
+    assert kod == 200 and veri["ok"] is False and veri["motor"] is False

@@ -8,6 +8,8 @@
 #endif
 #define UygAdi "Akıl Hocası"
 #define UygExe "AkilHocasi.exe"
+; Gözlemci eklentisinin sabit kimliği (manifest.json "key" alanından; akil_hocasi/gozlem/eslestirme.py ile aynı)
+#define EklentiKimligi "bomcdbbmmjdekjbldmgmoekhcagaidea"
 
 [Setup]
 ; AppId kurulumlar arasında sabit kalmalı: yeni sürüm eskisinin üzerine güncelleme olarak kurulur
@@ -72,6 +74,13 @@ Name: "{autodesktop}\{#UygAdi}"; Filename: "{app}\{#UygExe}"; Tasks: masaustu
 ; Windows açılışında tepside başlat; kaldırırken bu kayıt da silinir
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "AkilHocasi"; \
   ValueData: """{app}\{#UygExe}"" --tepside"; Flags: uninsdeletevalue; Tasks: baslangic
+; Akıl Hocası Gözlemci eklentisinin kendiliğinden eşleşmesi: Chrome/Edge yerel mesajlaşma köprüsü (yalnız bu kullanıcı)
+Root: HKCU; Subkey: "Software\Google\Chrome\NativeMessagingHosts\com.akilhocasi.gozlemci"; ValueType: string; \
+  ValueName: ""; ValueData: "{app}\kopru\com.akilhocasi.gozlemci.json"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\com.akilhocasi.gozlemci"; ValueType: string; \
+  ValueName: ""; ValueData: "{app}\kopru\com.akilhocasi.gozlemci.json"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Chromium\NativeMessagingHosts\com.akilhocasi.gozlemci"; ValueType: string; \
+  ValueName: ""; ValueData: "{app}\kopru\com.akilhocasi.gozlemci.json"; Flags: uninsdeletekey
 
 [Run]
 Filename: "{app}\{#UygExe}"; Description: "{cm:Baslat}"; Flags: nowait postinstall skipifsilent
@@ -79,12 +88,38 @@ Filename: "{app}\{#UygExe}"; Description: "{cm:Baslat}"; Flags: nowait postinsta
 [UninstallDelete]
 ; Programın kurulum klasöründe sonradan oluşturduğu dosyalar
 Type: files; Name: "{app}\surum.txt"
+Type: filesandordirs; Name: "{app}\kopru"
 Type: dirifempty; Name: "{app}"
 
 [Code]
 function VeriKlasoru(): String;
 begin
   Result := ExpandConstant('{localappdata}\AkilHocasi');
+end;
+
+{ Tarayıcının köprüyü bulduğu bildirim dosyası; yalnız Akıl Hocası Gözlemci eklentisinin kimliğine izin verir }
+procedure KopruBildiriminiYaz();
+var
+  Klasor, Exe, Json: String;
+begin
+  Klasor := ExpandConstant('{app}\kopru');
+  ForceDirectories(Klasor);
+  Exe := ExpandConstant('{app}\AkilHocasiKopru.exe');
+  StringChangeEx(Exe, '\', '\\', True);
+  Json := '{' + #13#10 +
+    '  "name": "com.akilhocasi.gozlemci",' + #13#10 +
+    '  "description": "Akil Hocasi Gozlemci koprusu (yerel esleme)",' + #13#10 +
+    '  "path": "' + Exe + '",' + #13#10 +
+    '  "type": "stdio",' + #13#10 +
+    '  "allowed_origins": ["chrome-extension://{#EklentiKimligi}/"]' + #13#10 +
+    '}';
+  SaveStringToFile(Klasor + '\com.akilhocasi.gozlemci.json', Json, False);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    KopruBildiriminiYaz();
 end;
 
 function InitializeUninstall(): Boolean;

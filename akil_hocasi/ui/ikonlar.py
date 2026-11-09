@@ -44,6 +44,9 @@ _YOLLAR = {
     "canli": '<circle cx="12" cy="12" r="4"/>',
     "klasor": '<path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
     "indir": '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+    "havuz": '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13.5 13.5 0 0 1 0 18M12 3a13.5 13.5 0 0 0 0 18"/>',
+    "dur": '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+    "arti": '<path d="M12 5v14M5 12h14"/>',
 }
 
 

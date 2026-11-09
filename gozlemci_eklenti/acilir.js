@@ -5,7 +5,7 @@ const $ = (id) => document.getElementById(id);
 const BAGLANTI = {
   bagli: ["Bağlı", "iyi", ""],
   kapali: ["Kapalı", "kotu", "Akıl Hocası uygulaması açık değil. Uygulama açılınca gözlem kendiliğinden sürer."],
-  anahtar_yok: ["Eşleştirilmedi", "uyari", "Ayarlar'a Akıl Hocası > Ayarlar > Tarayıcı gözlemcisi bölümündeki eşleştirme anahtarını yapıştırın."],
+  anahtar_yok: ["Eşleşmedi", "uyari", "Akıl Hocası ile kendiliğinden eşleşilemedi. Program kurulu mu? Ayarlar'dan yeniden deneyin."],
   anahtar_hatali: ["Anahtar hatalı", "kotu", "Eşleştirme anahtarı uygulamadakiyle uyuşmuyor. Ayarlar'dan yeniden girin."],
   bilinmiyor: ["Denetleniyor", "notr", ""],
 };
@@ -45,6 +45,18 @@ async function yenile() {
   $("sRet").textContent = (s.ret || 0) + (s.engel || 0);
   $("pasif").checked = !!r.ayar.pasif;
 
+  const m = r.motor && r.motor.etkin;
+  const motorCalisiyor = !!(m && m.durum === "calisiyor") || !!(r.motor && r.motor.sirada && r.motor.sirada.length);
+  $("motorKarti").hidden = !motorCalisiyor;
+  if (motorCalisiyor && m) {
+    const sc = m.sayac || {};
+    $("motorKok").textContent = m.kok;
+    $("motorCubuk").style.width = Math.min(100, Math.round((100 * m.sayfa) / Math.max(1, m.en_cok))) + "%";
+    const sirada = (r.motor.sirada || []).length;
+    $("motorBilgi").textContent = `${m.sayfa}/${m.en_cok} sayfa · sırada ${m.kuyruk} bağlantı · eklenen ${sc.kabul || 0} · güncel ${(sc.ayni || 0) + (sc.tekrar || 0)} · dosya ${sc.dosya || 0}`
+      + (sirada ? ` · ${sirada} site daha bekliyor` : "") + ". Tarayıcınızı kapatsanız da sürer.";
+  }
+
   const t = r.tarama;
   $("taramaKarti").hidden = !t;
   if (t) {
@@ -77,8 +89,10 @@ $("tara").addEventListener("click", async () => {
   $("tara").disabled = true;
   const r = await gonder("taramaBaslat", { url: sekmeAdresi });
   if (r && r.hata) { $("sekmeDurumu").textContent = r.hata; }
+  else if (r && r.devredildi) { $("sekmeDurumu").textContent = "Akıl Hocası siteyi arka planda tarıyor: " + (r.mesaj || ""); }
   await yenile();
 });
+$("motorDurdur").addEventListener("click", () => gonder("motorDurdur").then(yenile));
 $("duraklat").addEventListener("click", () => gonder("taramaDuraklat").then(yenile));
 $("devam").addEventListener("click", () => gonder("taramaDevam").then(yenile));
 $("sifirla").addEventListener("click", () => gonder("taramaSifirla").then(yenile));

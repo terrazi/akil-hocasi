@@ -1,5 +1,6 @@
 {
   "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoPo5gqjVLi2moCTtisropP8mV93U2mE858CwA5zIflWNSogAuraXYrSMDSy/8upmvArmVq6HEBXC54QJq48YEETxkRMTcVaRKno32cBnKQKG9PFSDNxRojr/AG35Tu2Pdfr3PbGujYgTItpPJoneY01pRRXalEpVJiayYh2PMqQbAuVP8wXpw/4G9Kvsdq7LzAmW3daZ8x39I9AHgQDWGyhY9d1lTd9j2MY4nwr5eNCSFBLFCZaqREVfGFzI0FRjnJzc89oMOM1Az9VCLKjizlUo0XWHpCKP7Y1un2DkT33/5l8IghRAD4UgwxwSh0Z0Xe5zc18fSeRU4u+lJz5twQIDAQAB",
   "name": "Akıl Hocası Gözlemci",
   "short_name": "Akıl Hocası",
   "version": "0.1.0",
@@ -13,7 +14,7 @@
   },
   "options_page": "ayarlar.html",
   "background": { "service_worker": "arka_plan.js" },
-  "permissions": ["storage", "alarms"],
+  "permissions": ["storage", "alarms", "nativeMessaging"],
   "host_permissions": [
     "http://127.0.0.1/*",
     "https://resmigazete.gov.tr/*", "https://*.resmigazete.gov.tr/*",

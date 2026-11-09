@@ -33,6 +33,7 @@ async function kaydet() {
   };
   await chrome.storage.local.set({ ayar: yeni });
   await yukle();
+eslesmeyiGoster();
 }
 
 $("kaydet").addEventListener("click", async () => {
@@ -51,9 +52,40 @@ $("kaydet").addEventListener("click", async () => {
     $("sonuc").style.color = "var(--kirmizi)";
   }
 });
+async function eslesmeyiGoster() {
+  const { durum } = await chrome.storage.local.get("durum");
+  const d = durum || {};
+  const el = $("eslesme");
+  if (d.kopru === "eslesti" && d.baglanti === "bagli") { el.textContent = "Eşleşti"; el.className = "rozet iyi"; }
+  else if (d.kopru === "eslesti") { el.textContent = "Eşleşti · program kapalı"; el.className = "rozet uyari"; }
+  else if (d.kopru === "yok") { el.textContent = "Köprü bulunamadı"; el.className = "rozet kotu"; }
+  else if (d.kopru === "red") { el.textContent = d.kopruNotu || "Reddedildi"; el.className = "rozet uyari"; }
+  else { el.textContent = "Denetleniyor"; el.className = "rozet notr"; }
+}
+
+$("yenidenEslestir").addEventListener("click", async () => {
+  $("sonuc").textContent = "Eşleşiliyor…";
+  const r = await chrome.runtime.sendMessage({ tur: "acilir", komut: "eslestir" });
+  const s = await chrome.runtime.sendMessage({ tur: "acilir", komut: "sina" });
+  await yukle();
+eslesmeyiGoster();
+  await eslesmeyiGoster();
+  if (r && r.ok && s && s.sonuc && s.sonuc.ok) {
+    $("sonuc").textContent = `Eşleşti ve bağlandı: ${s.sonuc.uygulama} ${s.sonuc.surum}.`;
+    $("sonuc").style.color = "var(--yesil)";
+  } else if (r && r.ok) {
+    $("sonuc").textContent = "Eşleşti; Akıl Hocası açılıyor. Birkaç saniye sonra yeniden deneyin.";
+    $("sonuc").style.color = "var(--sari)";
+  } else {
+    $("sonuc").textContent = "Köprü bulunamadı. Akıl Hocası kurulu değilse kurun; kuruluysa aşağıdan elle eşleştirin.";
+    $("sonuc").style.color = "var(--kirmizi)";
+  }
+});
+
 $("kaydet2").addEventListener("click", async () => {
   await kaydet();
   $("sonuc").textContent = "Tarama ayarları kaydedildi.";
 });
 
 yukle();
+eslesmeyiGoster();

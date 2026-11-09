@@ -11,7 +11,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from .sunucu import VARSAYILAN_PORT, yeni_anahtar
+from .eslestirme import anahtari_hazirla  # noqa: F401 - geriye uyum
 
 YONERGE = (
     "Akıl Hocası Gözlemci eklentisini Chrome veya Edge'e eklemek için:\n\n"
@@ -54,18 +54,6 @@ def eklentiyi_hazirla(veri_koku: Path) -> Path | None:
             shutil.rmtree(hedef, ignore_errors=True)
         shutil.copytree(kaynak, hedef, ignore=shutil.ignore_patterns("__pycache__", "*.test.js"))
     return hedef
-
-
-def anahtari_hazirla(ayarlar) -> str:
-    """Eşleştirme anahtarı yoksa üretir ve kaydeder."""
-    anahtar = ayarlar.al("gozlem.anahtar", "")
-    if not anahtar:
-        anahtar = yeni_anahtar()
-        ayarlar.ayarla("gozlem.anahtar", anahtar)
-        if not ayarlar.al("gozlem.port"):
-            ayarlar.ayarla("gozlem.port", VARSAYILAN_PORT)
-        ayarlar.kaydet()
-    return anahtar
 
 
 def kurulumu_goster(veri_koku: Path) -> int:

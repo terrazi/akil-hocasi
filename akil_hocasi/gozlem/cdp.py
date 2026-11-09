@@ -297,6 +297,9 @@ class BasliksizTarayici:
                       "--disable-features=Translate,MediaRouter,OptimizationHints", "--mute-audio", "--disable-gpu",
                       "--no-pings", "--password-store=basic", "--window-size=1366,900", "--lang=tr-TR",
                       *self.ek, "about:blank"]
+        if sys.platform.startswith("linux") and hasattr(os, "geteuid") and os.geteuid() == 0 \
+                and "--no-sandbox" not in argumanlar:
+            argumanlar.insert(1, "--no-sandbox")          # Linux'ta yönetici kullanıcıyla (derleme sunucusu) çalışabilsin
         bayrak = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.surec = subprocess.Popen(argumanlar, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                       stdin=subprocess.DEVNULL, creationflags=bayrak)

@@ -49,7 +49,17 @@ VARSAYILAN_AYARLAR: dict = {
     "gozlem": {
         "acik": True,                # Akıl Hocası Gözlemci eklentisinden gelen sayfaları değerlendir
         "port": 47231,               # yalnız 127.0.0.1
-        "anahtar": "",               # eşleştirme anahtarı; ilk açılışta üretilir
+        "anahtar": "",               # eşleştirme anahtarı; ilk açılışta üretilir, eklenti köprüyle kendisi alır
+        "motor": {                   # gömülü tarayıcı (görünmez Edge/Chrome, yalıtılmış geçici profil)
+            "acik": True,
+            "hiz": "normal",         # yavas | normal | hizli
+            "en_cok_sayfa": 200,
+            "derinlik": 4,
+            "tarayici_yolu": "",     # boşsa Edge, yoksa Chrome kendiliğinden bulunur
+            # Haftada bir, bilgisayar boştayken taranır (Faz 0'da TOGÜ birim adresleri doğrulanacak)
+            "siteler": ["https://kalite.gop.edu.tr/", "https://personel.gop.edu.tr/", "https://strateji.gop.edu.tr/",
+                        "https://imid.gop.edu.tr/", "https://ebysyardim.gop.edu.tr/"],
+        },
     },
 }
 

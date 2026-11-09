@@ -21,8 +21,8 @@ from .danisma import DanismaSayfasi
 from .hizli_yakala import CanliMetinPenceresi, YakalamaKatmani
 from .ikonlar import ikon, logo_pixmap
 from .kisayol import GenelKisayol, bosta_kalma_sn
-from .sayfalar import (AyarlarSayfasi, BelgeDeposuSayfasi, NelerDegistiSayfasi, YakindaSayfasi,
-                       YaziHazirlamaSayfasi)
+from .sayfalar import (AyarlarSayfasi, BelgeDeposuSayfasi, KaynakHavuzuSayfasi, NelerDegistiSayfasi,
+                       YakindaSayfasi, YaziHazirlamaSayfasi)
 from .tema import R
 
 log = logging.getLogger("akilhocasi")
@@ -84,8 +84,9 @@ class BelgeMetniPenceresi(QWidget):
 
 
 class GozlemKoprusu(QObject):
-    """Gözlem sunucusunun iş parçacığından arayüze güvenli geçiş (kuyruklu sinyal)."""
+    """Gözlem sunucusunun ve tarama motorunun iş parçacıklarından arayüze güvenli geçiş (kuyruklu sinyal)."""
     geldi = Signal(object)
+    motor = Signal(object)
 
 
 class DurumCubugu(QFrame):
@@ -154,6 +155,10 @@ class AnaPencere(QMainWindow):
         self._gozlem_sunucusu = None
         self._gozlem_koprusu = GozlemKoprusu(self)
         self._gozlem_koprusu.geldi.connect(self._gozlem_geldi)
+        self._gozlem_koprusu.motor.connect(self._motor_durumu)
+        self._havuz_yenileme = QTimer(self)
+        self._havuz_yenileme.setSingleShot(True)
+        self._havuz_yenileme.timeout.connect(self._havuzu_yenile)
         self._gozlem_sayac: dict[str, int] = {}
 
         kok = QWidget()
@@ -229,6 +234,7 @@ class AnaPencere(QMainWindow):
             ("hesap", "hesap", "Hesapla", "Hesaplama"),
             ("kontrol", "kontrol", "Kontrol", "Ödeme / evrak ön kontrolü"),
             ("depo", "depo", "Depo", "Belge Deposu"),
+            ("havuz", "havuz", "Kaynaklar", "Kaynak Havuzu: gömülü tarayıcı ve tarayıcı eklentisi"),
             ("degisti", "degisti", "Değişenler", "Neler değişti"),
         ):
             d = dugme(anahtar, ik, metin, ipucu, sayfa=(anahtar != "yakala"))
@@ -275,9 +281,13 @@ class AnaPencere(QMainWindow):
         self.ayarlar_sayfa.kaydedildi.connect(self._ayarlar_kaydedildi)
         self.ayarlar_sayfa.guncelle_istendi.connect(lambda: self.guncelle(["hafif", "gece"]))
         self.ayarlar_sayfa.aday_model_istendi.connect(self._aday_model_dene)
-        self.ayarlar_sayfa.gozlem_degisti.connect(self._gozlem_kur)
+        self.havuz = KaynakHavuzuSayfasi(s)
+        self.havuz.tara_istendi.connect(self._site_tara)
+        self.havuz.durdur_istendi.connect(lambda: s.motor.durdur())
+        self.havuz.ayarlar_degisti.connect(self._gozlem_kur)
+        s.motor.bildir = self._gozlem_koprusu.motor.emit
         self.sayfalar = {"danisma": self.danisma, "yazi": self.yazi, "hesap": hesap, "kontrol": kontrol,
-                         "depo": self.depo_sayfa, "degisti": self.degisti, "ayarlar": self.ayarlar_sayfa}
+                         "depo": self.depo_sayfa, "havuz": self.havuz, "degisti": self.degisti, "ayarlar": self.ayarlar_sayfa}
         for anahtar, sayfa in self.sayfalar.items():
             self.yigin.addWidget(sayfa)
             self.dugmeler[anahtar].clicked.connect(lambda _=False, a=anahtar: self._sayfa(a))
@@ -471,6 +481,12 @@ class AnaPencere(QMainWindow):
             self._sabah_ozeti()
             self.s.kutuphane.zamanlayici_yaz("sabah")
             bekleyen.remove("sabah")
+        if "siteler" in bekleyen:
+            bekleyen.remove("siteler")
+            if self.s.ayarlar.al("gozlem.motor.acik", True) and self.s.motor.tarayici_yolu():
+                for site in self.s.ayarlar.al("gozlem.motor.siteler", []) or []:
+                    self.s.motor.ekle(site)
+            self.s.kutuphane.zamanlayici_yaz("siteler")
         if "ogrenme" in bekleyen:
             bekleyen.remove("ogrenme")
             if not bekleyen:          # ağ taraması yokken öğren (aynı anda ikisi çalışmasın)
@@ -582,47 +598,69 @@ class AnaPencere(QMainWindow):
 
     # ================================================================== tarayıcı gözlemcisi
     def _gozlem_kur(self) -> None:
-        """Yerel gözlem sunucusunu ayarlara göre (yeniden) başlatır."""
-        from ..gozlem.kurulum import anahtari_hazirla, eklentiyi_hazirla
+        """Yerel gözlem sunucusunu ayarlara göre (yeniden) başlatır; eklenti ve motor aynı havuza akar."""
+        from ..gozlem.eslestirme import anahtari_hazirla
+        from ..gozlem.kurulum import eklentiyi_hazirla
         from ..gozlem.sunucu import GozlemSunucusu
         if self._gozlem_sunucusu:
             self._gozlem_sunucusu.durdur()
             self._gozlem_sunucusu = None
         a = self.s.ayarlar
-        if not a.al("gozlem.acik", True):
-            self.durum.gozlem.setText("")
-            self.ayarlar_sayfa.gozlem_durumu_yaz("Gözlemci kapalı. Eklentiden gelen sayfalar değerlendirilmiyor.")
-            return
         try:
             eklentiyi_hazirla(self.s.yollar.kok)
         except OSError as e:
             log.warning("Eklenti klasörü hazırlanamadı: %s", e)
         anahtar = anahtari_hazirla(a)
-        self.ayarlar_sayfa.gozlem_anahtar.setText(anahtar)
+        self.havuz.gozlem_anahtar.setText(anahtar)
+        if not a.al("gozlem.acik", True):
+            self.durum.gozlem.setText("")
+            self.havuz.gozlem_durumu_yaz("Eklenti gözlemi kapalı; gömülü tarayıcı yine çalışır.")
+            return
         port = int(a.al("gozlem.port", 47231))
-        sunucu = GozlemSunucusu(self.s.gozlem, anahtar, port, tarayici=self.s.tarayici,
+        sunucu = GozlemSunucusu(self.s.gozlem, anahtar, port, dosyalar=self.s.dosya_kuyrugu, motor=self.s.motor,
                                 bildir=self._gozlem_koprusu.geldi.emit)
         if sunucu.baslat():
             self._gozlem_sunucusu = sunucu
-            self.durum.gozlem.setText("Gözlemci: hazır")
-            self.ayarlar_sayfa.gozlem_durumu_yaz(f"Gözlemci 127.0.0.1:{port} üzerinde hazır. Eklentiyi eşleştirdiğinizde "
-                                                 "gezdiğiniz resmî sayfalar kütüphaneye eklenir.")
+            self.durum.gozlem.setText("Kaynak havuzu: hazır")
+            self.havuz.gozlem_durumu_yaz(f"Yerel bağlantı 127.0.0.1:{port} üzerinde hazır.")
         else:
-            self.durum.gozlem.setText("Gözlemci: kapalı")
-            self.ayarlar_sayfa.gozlem_durumu_yaz(f"{port} numaralı bağlantı noktası kullanımda. Başka bir numara seçip "
-                                                 "kaydedin ve eklentide de aynı numarayı girin.")
+            self.durum.gozlem.setText("Kaynak havuzu: eklenti bağlantısı kapalı")
+            self.havuz.gozlem_durumu_yaz(f"{port} numaralı bağlantı noktası kullanımda. Başka bir numara seçip kaydedin; "
+                                         "eklenti yenisini köprüyle kendiliğinden alır.")
 
     def _gozlem_geldi(self, sonuc: dict) -> None:
         karar = sonuc.get("karar", "")
         self._gozlem_sayac[karar] = self._gozlem_sayac.get(karar, 0) + 1
-        eklenen = self._gozlem_sayac.get("kabul", 0)
-        kuyruk = self._gozlem_sunucusu.kuyruk.qsize() if self._gozlem_sunucusu else 0
-        self.durum.gozlem.setText(f"Gözlemci: {eklenen} sayfa eklendi" + (f" · {kuyruk} dosya sırada" if kuyruk else ""))
+        if self._gozlem_sunucusu:
+            self.havuz.eklenti_temas(self._gozlem_sunucusu.son_temas)
         if karar == "kabul":
             self.durum.etkinlik.setText(f"Gözlemden eklendi: {sonuc.get('kimlik', '')[:60]}")
-            self._durumu_guncelle()
-        ozet = ", ".join(f"{k} {v}" for k, v in sorted(self._gozlem_sayac.items()))
-        self.ayarlar_sayfa.gozlem_durumu_yaz(f"Gözlemci bağlı. Bu oturumda: {ozet}.")
+        self._havuz_yenileme.start(1500)
+
+    def _motor_durumu(self, d: dict) -> None:
+        self.havuz.motor_durumu(d)
+        e = d.get("etkin")
+        if e and e.get("durum") == "calisiyor":
+            self.durum.gozlem.setText(f"Taranıyor: {e['kok'].split('//')[-1].rstrip('/')} · {e['sayfa']}/{e['en_cok']}")
+        else:
+            self.durum.gozlem.setText("Kaynak havuzu: hazır" if self._gozlem_sunucusu else "")
+            self._havuz_yenileme.start(500)
+        if not self._havuz_yenileme.isActive():
+            self._havuz_yenileme.start(3000)
+
+    def _havuzu_yenile(self) -> None:
+        self.havuz.yenile()
+        self._durumu_guncelle()
+
+    def _site_tara(self, url: str) -> None:
+        if not self.s.ayarlar.al("gozlem.motor.acik", True):
+            self.havuz.gozlem_durumu_yaz("Gömülü tarayıcı ayarlarda kapalı.")
+            return
+        if not self.s.motor.tarayici_yolu():
+            self.havuz.gozlem_durumu_yaz("Bilgisayarda Edge ya da Chrome bulunamadı; tarama yapılamıyor.")
+            return
+        ok, mesaj = self.s.motor.ekle(url)
+        self.havuz.gozlem_durumu_yaz(mesaj)
 
     def _ayarlar_kaydedildi(self) -> None:
         from ..crawler.zamanlayici import Zamanlayici
@@ -656,6 +694,8 @@ class AnaPencere(QMainWindow):
         self._cikiliyor = True
         if self._gozlem_sunucusu:
             self._gozlem_sunucusu.durdur()
+        self.s.motor.kapat()
+        self.s.dosya_kuyrugu.durdur()
         if self.s.tarayici:
             self.s.tarayici.durdur.set()
         for t in (self._tarama, self._takip, self._ogrenme, self._aday):

@@ -99,17 +99,32 @@ def calistir(rapor_yolu: str) -> int:
         motorlar = [m.ad for m in s.ocr.motorlar]
         if not motorlar:
             raise RuntimeError("Hiç OCR motoru yok")
+        # Ekransız (offscreen) Qt'nin yazı tipi listesi boş olabilir: yazı tipi dosyası doğrudan yüklenir
+        from PySide6.QtGui import QFontDatabase
+        aile = "Arial"
+        for dosya in (os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "arial.ttf"),
+                      os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "segoeui.ttf"),
+                      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
+            if os.path.isfile(dosya):
+                no = QFontDatabase.addApplicationFont(dosya)
+                aileler = QFontDatabase.applicationFontFamilies(no) if no >= 0 else []
+                if aileler:
+                    aile = aileler[0]
+                    break
         img = QImage(900, 120, QImage.Format_RGB32)
         img.fill(QColor("white"))
         p = QPainter(img)
         p.setRenderHint(QPainter.TextAntialiasing)
         p.setPen(QColor("#202020"))
-        p.setFont(QFont("Arial", 16))
+        p.setFont(QFont(aile, 16))
         p.drawText(16, 50, "Pijamalı hasta yağız şoföre çabucak güvendi.")
         p.drawText(16, 95, "TC Kimlik No: 10000000146  Tarih: 09.11.2026")
         p.end()
         from .ui.bilesenler import qimage_to_numpy
-        sonuc = s.ocr.oku(qimage_to_numpy(img))
+        dizi = qimage_to_numpy(img)
+        if int(dizi.min()) > 200:
+            raise RuntimeError(f"Test görüntüsü boş çizildi (yazı tipi: {aile}); OCR sınanamadı")
+        sonuc = s.ocr.oku(dizi)
         metin = sonuc.metin()
         if "Pijamalı" not in metin and "şoföre" not in metin:
             raise RuntimeError(f"Türkçe metin okunamadı ({sonuc.motor}): {metin[:120]}")
@@ -161,8 +176,46 @@ def calistir(rapor_yolu: str) -> int:
         return f"eklenti v{_json.loads(eklenti.read_text('utf-8'))['version']}, sunucu ve değerlendirici çalışıyor"
     adim("Tarayıcı gözlemcisi", gozlemci)
 
+    def gomulu_tarayici():
+        from .gozlem.cdp import BasliksizTarayici, tarayici_bul
+        yol = tarayici_bul(s.ayarlar.al("gozlem.motor.tarayici_yolu", ""))
+        if not yol:
+            return "Edge/Chrome bulunamadı (gömülü tarayıcı kapalı; eklenti yine çalışır)"
+        with BasliksizTarayici(yol, durulma=0.2) as t:
+            sonuc = t.sayfa_oku("data:text/html,<h1>Akil Hocasi</h1>")
+            surum = t.surum
+        if sonuc.get("tur") != "kapsam_disi":          # data: adresi beyaz listede değil: ortak kural reddetmeli
+            raise RuntimeError(f"ortak okuma kuralı beklenmeyen sonuç verdi: {sonuc}")
+        return f"{surum}: görünmez tarayıcı, yalıtılmış dünya ve ortak okuma kuralı çalışıyor"
+    adim("Gömülü tarayıcı", gomulu_tarayici)
+
+    def kopru():
+        import json as _json
+        import struct
+        import subprocess
+
+        from .gozlem.eslestirme import EKLENTI_KIMLIGI, KOPRU_EXE
+        if not getattr(sys, "frozen", False):
+            return "geliştirme ortamı (köprü exe'si paketle gelir)"
+        exe = Path(sys.executable).with_name(KOPRU_EXE)
+        if not exe.is_file():
+            raise RuntimeError(f"{KOPRU_EXE} pakette yok")
+        veri = _json.dumps({"tur": "eslestir"}).encode()
+        c = subprocess.run([str(exe), f"chrome-extension://{EKLENTI_KIMLIGI}/"], input=struct.pack("<I", len(veri)) + veri,
+                           capture_output=True, timeout=60, env=dict(os.environ))
+        n = struct.unpack("<I", c.stdout[:4])[0]
+        cevap = _json.loads(c.stdout[4:4 + n])
+        if not cevap.get("ok") or not cevap.get("anahtar"):
+            raise RuntimeError(f"köprü cevabı: {cevap}")
+        return "köprü exe'si tarayıcı gibi çağrıldı, eşleşme anahtarını döndürdü"
+    adim("Eklenti köprüsü", kopru)
+
+    adim("Kaynak Havuzu sayfası", lambda: pencere.havuz.yenile() or "yenilendi")
+
     if pencere._gozlem_sunucusu:
         pencere._gozlem_sunucusu.durdur()
+    s.motor.kapat()
+    s.dosya_kuyrugu.durdur()
     pencere._cikiliyor = True
     pencere.kisayol.kaldir()
     pencere.tepsi.hide()

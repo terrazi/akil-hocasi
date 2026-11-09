@@ -3,6 +3,8 @@
 Uç noktalar:
   GET  /v1/durum   → bağlantı testi + beyaz liste ve sistem engel listesi (eklenti kuralları uygulamadan alır)
   POST /v1/gozlem  → bir sayfa gözlemi; cevap: değerlendirme kararı
+  POST /v1/tara    → bir siteyi programın gömülü tarama motoruna devreder ({"url": ...})
+  GET  /v1/tara    → motorun durumu (etkin tarama, sıra)
 Güvenlik: yalnız geri döngü adresi; Host başlığı denetimi (DNS yeniden bağlama); Origin yalnız eklenti;
 sabit zamanlı anahtar karşılaştırma; 3 MB istek sınırı.
 """
@@ -12,14 +14,12 @@ from __future__ import annotations
 import hmac
 import json
 import logging
-import queue
-import secrets
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .. import __version__
 from ..crawler import beyaz_liste
-from ..crawler.kaynaklar import kod_bul
 from .degerlendirici import (
     ISTISNALAR,
     SISTEM_ALANLARI,
@@ -27,26 +27,23 @@ from .degerlendirici import (
     GozlemDegerlendirici,
 )
 
+from .eslestirme import VARSAYILAN_PORT, yeni_anahtar  # noqa: F401 - dışarıya da buradan sunulur
+
 log = logging.getLogger("akilhocasi")
-VARSAYILAN_PORT = 47231
 EN_BUYUK_ISTEK = 3 * 1024 * 1024
-
-
-def yeni_anahtar() -> str:
-    return secrets.token_urlsafe(24)
 
 
 class GozlemSunucusu:
     def __init__(self, degerlendirici: GozlemDegerlendirici, anahtar: str, port: int = VARSAYILAN_PORT,
-                 tarayici=None, bildir=None):
+                 dosyalar=None, motor=None, bildir=None):
         self.d = degerlendirici
         self.anahtar = anahtar
         self.port = port
-        self.tarayici = tarayici
+        self.dosyalar = dosyalar          # DosyaKuyrugu: resmî dosyalar resmî siteden indirilir
+        self.motor = motor                # GozlemMotoru: "Bu siteyi tara" programın motoruna devredilir
         self.bildir = bildir or (lambda sonuc: None)
-        self.kuyruk: queue.Queue = queue.Queue(maxsize=5000)
         self.httpd: ThreadingHTTPServer | None = None
-        self._durdur = threading.Event()
+        self.son_temas = 0.0
 
     # ---------------------------------------------------------------- yaşam döngüsü
     def baslat(self) -> bool:
@@ -100,20 +97,24 @@ class GozlemSunucusu:
             def do_GET(self):
                 if not (self._host_izinli() and self._origin_izinli()):
                     return self._yanit(403, {"hata": "izin yok"})
-                if self.path != "/v1/durum":
+                if self.path not in ("/v1/durum", "/v1/tara"):
                     return self._yanit(404, {"hata": "yok"})
                 if not self._yetkili():
                     return self._yanit(401, {"hata": "eşleştirme anahtarı geçersiz"})
+                sunucu.son_temas = time.time()
+                if self.path == "/v1/tara":
+                    return self._yanit(200, sunucu.motor.durum() if sunucu.motor else {"etkin": None, "motor": False})
                 return self._yanit(200, {
                     "ok": True, "uygulama": "Akıl Hocası", "surum": __version__,
                     "birincil": beyaz_liste.BIRINCIL, "ikincil": beyaz_liste.IKINCIL,
                     "sistem_alanlari": SISTEM_ALANLARI, "sistem_anahtarlari": SISTEM_ANAHTARLARI,
-                    "istisnalar": ISTISNALAR, "istatistik": sunucu.d.istatistik()})
+                    "istisnalar": ISTISNALAR, "istatistik": sunucu.d.istatistik(),
+                    "motor": bool(sunucu.motor and sunucu.motor.tarayici_yolu())})
 
             def do_POST(self):
                 if not (self._host_izinli() and self._origin_izinli()):
                     return self._yanit(403, {"hata": "izin yok"})
-                if self.path != "/v1/gozlem":
+                if self.path not in ("/v1/gozlem", "/v1/tara"):
                     return self._yanit(404, {"hata": "yok"})
                 if not self._yetkili():
                     return self._yanit(401, {"hata": "eşleştirme anahtarı geçersiz"})
@@ -129,19 +130,25 @@ class GozlemSunucusu:
                         raise ValueError
                 except (ValueError, UnicodeDecodeError):
                     return self._yanit(400, {"hata": "geçersiz JSON"})
+                sunucu.son_temas = time.time()
+                if self.path == "/v1/tara":
+                    if not sunucu.motor or not sunucu.motor.tarayici_yolu():
+                        return self._yanit(200, {"ok": False, "motor": False,
+                                                 "mesaj": "Programın tarama motoru kullanılamıyor"})
+                    if kayit.get("komut") == "durdur":
+                        sunucu.motor.durdur()
+                        return self._yanit(200, {"ok": True, "motor": True, "mesaj": "Tarama durduruldu"})
+                    ok, mesaj = sunucu.motor.ekle(str(kayit.get("url", "")))
+                    return self._yanit(200, {"ok": ok, "motor": True, "mesaj": mesaj})
                 try:
                     sonuc = sunucu.d.degerlendir(kayit)
                 except Exception as e:  # değerlendirme hatası sunucuyu düşürmez
                     log.warning("Gözlem değerlendirme hatası: %s", e)
                     return self._yanit(500, {"hata": "değerlendirme hatası"})
-                for oge in sonuc.get("indirilecek", []):
-                    try:
-                        sunucu.kuyruk.put_nowait(oge)
-                    except queue.Full:
-                        break
+                alinan = sunucu.dosyalar.ekle(sonuc.get("indirilecek", [])) if sunucu.dosyalar else 0
                 sunucu.bildir(sonuc)
                 return self._yanit(200, {k: v for k, v in sonuc.items() if k != "indirilecek"} |
-                                   {"kuyruga_alinan": len(sonuc.get("indirilecek", []))})
+                                   {"kuyruga_alinan": alinan})
 
         try:
             self.httpd = ThreadingHTTPServer(("127.0.0.1", self.port), Isleyici)
@@ -150,40 +157,11 @@ class GozlemSunucusu:
             return False
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, name="gozlem-sunucu", daemon=True).start()
-        threading.Thread(target=self._indirici, name="gozlem-indirici", daemon=True).start()
         log.info("Gözlem sunucusu 127.0.0.1:%s üzerinde", self.port)
         return True
 
     def durdur(self) -> None:
-        self._durdur.set()
         if self.httpd:
             self.httpd.shutdown()
             self.httpd.server_close()
-
-    # ---------------------------------------------------------------- dosya indirme kuyruğu
-    def _indirici(self) -> None:
-        """Gözlemde görülen resmî dosyaları doğrudan resmî siteden indirip depoya ve kütüphaneye işler."""
-        from ..crawler.tarayici import TaramaRaporu
-        while not self._durdur.is_set():
-            try:
-                oge = self.kuyruk.get(timeout=1)
-            except queue.Empty:
-                continue
-            if self.tarayici is None:
-                continue
-            url = oge["url"]
-            if self.d.k.kaynak_durumu(url):          # zaten biliniyor; güncellemeyi tarayıcı takvimi yapar
-                continue
-            rapor = TaramaRaporu("gozlem")
-            try:
-                s = self.tarayici._getir(url, rapor)
-                if s.basarili:
-                    kod = oge.get("kod") or kod_bul(oge.get("metin", ""))
-                    togu = "gop.edu.tr" in url
-                    self.tarayici.belge_isle(
-                        s, rapor, tur="togu" if togu else "web", kimlik=kod or url,
-                        baslik=oge.get("metin") or kod or url.rsplit("/", 1)[-1],
-                        kaynak_turu="TOGÜ belgesi" if togu else "Resmî görüş", kod=kod,
-                        sayfa_url=oge.get("sayfa_url", ""))
-            except Exception as e:
-                log.warning("Gözlem dosyası indirilemedi %s: %s", url, e)
+            self.httpd = None

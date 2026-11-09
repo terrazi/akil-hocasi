@@ -23,7 +23,7 @@ from .library.db import Kutuphane
 from .ocr.duzeltme import TurkceDuzeltici
 from .ocr.hat import OcrHatti
 from .ocr.motorlar import motorlari_hazirla
-from .gozlem import GozlemDegerlendirici
+from .gozlem.degerlendirici import GozlemDegerlendirici
 from .ogrenme import OgrenmeMotoru
 from .ogrenme.siralayici import OgrenenSiralayici
 
@@ -44,6 +44,8 @@ class Servisler:
     ogrenme: OgrenmeMotoru
     siralayici: OgrenenSiralayici
     gozlem: GozlemDegerlendirici
+    dosya_kuyrugu: object
+    motor: object
 
 
 _cevrimici_onbellek = {"zaman": 0.0, "durum": True}
@@ -113,9 +115,22 @@ def servisleri_kur() -> Servisler:
     hat = CevapHatti(kutuphane, DogrulamaMotoru(kutuphane, BIRINCIL), BosModel(), cevrimici=saglayicilar,
                      depo=depo, cevrimici_mi=cevrimici_mi,
                      ogrenme=ogrenme if ayarlar.al("ogrenme.acik", True) else None, siralayici=siralayici)
+    # Kaynak havuzu: eklenti gözlemleri ve gömülü tarayıcı motoru aynı değerlendiriciye ve dosya kuyruğuna akar
+    from .gozlem.dosya_kuyrugu import DosyaKuyrugu
+    from .gozlem.eslestirme import yerel_mesajlasma_kaydet
+    from .gozlem.motor import GozlemMotoru
+    gozlem = GozlemDegerlendirici(kutuphane)
+    dosya_kuyrugu = DosyaKuyrugu(tarayici, kutuphane)
+    motor = GozlemMotoru(gozlem, dosya_kuyrugu, ayar=lambda: ayarlar.al("gozlem.motor", {}))
+    try:
+        kayitli = yerel_mesajlasma_kaydet(yollar.kok)      # eklentinin kendiliğinden eşleşmesi (yalnız paketli sürüm)
+        if kayitli:
+            log.info("Eklenti köprüsü kayıtlı: %s", ", ".join(kayitli))
+    except OSError as e:
+        log.warning("Eklenti köprüsü kaydedilemedi: %s", e)
     return Servisler(yollar, ayarlar, kutuphane, depo, tarayici, hat, ocr,
                      Zamanlayici(ayarlar.al("guncelleme", {}), kimlik), kimlik, ogrenme, siralayici,
-                     GozlemDegerlendirici(kutuphane))
+                     gozlem, dosya_kuyrugu, motor)
 
 
 _MUTEX = None
