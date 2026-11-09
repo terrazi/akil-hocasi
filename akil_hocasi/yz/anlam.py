@@ -57,15 +57,18 @@ class AnlamDizini:
             " WHERE m.yururluk_bitis IS NULL AND m.mulga=0 AND a.model=?", (self.model_kimlik,)).fetchone()[0]
         return hazir, toplam
 
-    def eksikleri_isle(self, sinir: int = 512, durdur: threading.Event | None = None, ilerleme=None) -> int:
-        """Vektörü olmayan ya da metni değişen güncel maddeleri vektörler. İşlenen madde sayısını döndürür."""
+    def eksikleri_isle(self, sinir: int = 512, durdur: threading.Event | None = None, ilerleme=None,
+                       belge_kimligi: str = "") -> int:
+        """Vektörü olmayan ya da metni değişen güncel maddeleri vektörler (belge_kimligi: yalnız o belge).
+        İşlenen madde sayısını döndürür."""
         if not self.hazir:
             return 0
         satirlar = self.k.db.execute(
             "SELECT m.id, m.madde_no, m.baslik, m.metin, b.baslik AS belge, a.sha AS eski_sha, a.model AS eski_model"
             " FROM maddeler m JOIN belgeler b ON b.id=m.belge_id LEFT JOIN yz_anlam a ON a.madde_id=m.id"
             " WHERE m.yururluk_bitis IS NULL AND m.mulga=0 AND (a.madde_id IS NULL OR a.model!=?)"
-            " ORDER BY m.id LIMIT ?", (self.model_kimlik, sinir)).fetchall()
+            " AND (?='' OR b.kimlik=?) ORDER BY m.id LIMIT ?",
+            (self.model_kimlik, belge_kimligi, belge_kimligi, sinir)).fetchall()
         islenen = 0
         for i in range(0, len(satirlar), 16):
             if durdur is not None and durdur.is_set():

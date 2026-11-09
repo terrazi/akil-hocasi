@@ -463,7 +463,8 @@ class AnaPencere(QMainWindow):
 
     def _anlam_dizinle(self) -> None:
         """Anlam dizinini küçük partilerle tamamlar (yeni maddeler geldikçe; kullanıcı soru sorarken bekler)."""
-        if not self.s.yz.anlam.hazir or (self._anlam_calisani and self._anlam_calisani.isRunning()):
+        if (not self._zamanlayici_acik or not self.s.yz.anlam.hazir
+                or (self._anlam_calisani and self._anlam_calisani.isRunning())):
             return
         hazir, toplam = self.s.yz.anlam.ilerleme()
         if hazir >= toplam:

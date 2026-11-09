@@ -48,6 +48,11 @@ def calistir(rapor_yolu: str) -> int:
     s = adim("Servisler", servisleri_kur)
     if s is None:
         return _bitir(rapor_yolu, satirlar, hatalar)
+    if s.bilgi_paketi is not None:                     # belirlenimci olsun: çekirdek paket önce işlensin
+        import time as _t
+        _b = _t.monotonic()
+        s.bilgi_paketi.join(900)
+        satirlar.append(f"[BİLGİ] Çekirdek bilgi paketi {(_t.monotonic() - _b):.0f} sn'de işlendi")
 
     ornek = ("ÖZ TEST BELGESİ\nDeneme hükmü\nMADDE 1 – (1) Deneme hükmüne göre başvuru 15 gün içinde "
              "TOGÜ.FRM.396 formu ile yapılır.\n")
@@ -334,7 +339,7 @@ def calistir(rapor_yolu: str) -> int:
         from .yz import sunucu as _sunucu
         if sys.platform == "win32" and _sunucu._IS_NESNESI is None:
             raise RuntimeError("model sunucusu iş nesnesine bağlanamadı (program kapanınca sunucu açık kalabilir)")
-        islenen = s.yz.anlam.eksikleri_isle(2000)
+        islenen = s.yz.anlam.eksikleri_isle(64, belge_kimligi="OZTEST") + s.yz.anlam.eksikleri_isle(32)
         bulunan = s.yz.anlam.ara("başvuru için tanınan süre ne kadar", 3)
         oztest_id = s.kutuphane.db.execute(
             "SELECT m.id FROM maddeler m JOIN belgeler b ON b.id=m.belge_id WHERE b.kimlik='OZTEST'").fetchone()[0]
