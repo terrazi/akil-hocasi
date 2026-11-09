@@ -285,6 +285,33 @@ def calistir(rapor_yolu: str) -> int:
 
     adim("Zekâ sayfası", lambda: pencere.zeka.yenile() or f"{pencere.zeka.model_tablosu.rowCount()} model listelendi")
 
+    def kaggle_baglantisi():
+        import json as _json
+        import zipfile as _zip
+
+        from .yz.kaggle_paketi import paket_olustur
+        d = Path(tempfile.mkdtemp())
+        gguf = d / "akilhocasi-4b-oztest.gguf"
+        gguf.write_bytes(b"GGUF" + b"\0" * 64)
+        (d / "akilhocasi-4b-oztest.json").write_text(_json.dumps({
+            "kimlik": "akilhocasi-4b-oztest", "ad": "Öz test eğitilmiş model", "tur": "sohbet", "temel": "qwen3.5-4b",
+            "en_az_bellek_gb": 7.5, "egitim": {"kapi": False}}), encoding="utf-8")
+        once = pencere.zeka.model_tablosu.rowCount()
+        pencere._ozel_model_ekle(str(gguf))
+        pencere._is_calisani.wait(60_000)
+        app.processEvents()
+        if not any(m["kimlik"] == "akilhocasi-4b-oztest" for m in s.yz.ozel_modeller()):
+            raise RuntimeError("eğitilmiş model eklenemedi")
+        if pencere.zeka.model_tablosu.rowCount() != once + 1:
+            raise RuntimeError("eğitilmiş model Zekâ tablosunda görünmüyor")
+        s.yz.sil("akilhocasi-4b-oztest")
+        m = paket_olustur(s.kutuphane, d / "paket.zip")
+        with _zip.ZipFile(d / "paket.zip") as z:
+            if {"kutuphane.db", "sorular.jsonl", "manifest.json"} - set(z.namelist()):
+                raise RuntimeError("eğitim paketi eksik")
+        return f"eğitilmiş model eklendi ve listelendi; eğitim paketi {m['boyut_mb']} MB ({m['belge']} belge)"
+    adim("Kaggle bağlantısı (eğitilmiş model, eğitim paketi)", kaggle_baglantisi)
+
     def resmi_yazi():
         from .answer.llm import BosModel
         from .yazi.cikti import docx_kaydet

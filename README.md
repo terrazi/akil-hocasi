@@ -24,6 +24,7 @@ Bilgi üretmez: resmî kaynaktan alır, doğrular, kaynağıyla sunar. Kamu sist
 | Kendini geliştirme: çalışma soruları, hatalardan yöntem dersleri, yordam ayarı denemeleri, model yarışı | Çalışır, test edildi |
 | Resmî Yazı Hazırlama: gelen yazı çözümleme, 2020 Yönetmeliğine göre taslak, sınama, kontrol listesi, Word + EBYS metni | Çalışır, test edildi |
 | Çekirdek bilgi paketi: temel mevzuat kurulumla gelir (internet yokken ilk gün de kaynaklı cevap) | Derleme hattında resmî kaynaktan |
+| Kaggle'da yoğun eğitim: öğretmen modelle damıtma, 4B ince ayar, ilke karnesiyle sınav, programa ekleme | Defterler ve hat hazır; ilk GPU çalıştırması bekleniyor |
 | Hesaplama, Ön Kontrol | Yer tutucu sayfa (Faz 4, 5) |
 
 ## Kurulum (tek dosya, yönetici yetkisi gerekmez)
@@ -102,6 +103,17 @@ strateji ayarı, benimseme, model gelişimi…) bu ilkelere bağlıdır. Öğren
 ayarlarını izinli aralıkta, **ilke karnesinde** hiçbir ilkenin notunu düşürmeden ve gerçek iyileşme göstererek
 değiştirebilir (gelişim kapısı). Bilgisayar boştayken program kendi çalışma sorularını üretir, hatalarından yöntem
 dersleri çıkarır, ayar denemeleri yapar ve daha iyi bir model adayı varsa aynı sınavda yarıştırır.
+
+## Kaggle'da yoğun eğitim
+
+Ofis bilgisayarında çalışan küçük model, Kaggle'ın ücretsiz GPU'larında büyük bir öğretmen modelle (Qwen3.5-35B-A3B)
+**programın kendi çekirdek yordamları üzerinden** eğitilir: öğretmen, programın sorduğu her şeye (durum çözümleme,
+gerekçeli cevap, öz eleştiri, düzeltme, hatadan ders, çalışma sorusu, resmî yazı) programın istemleriyle cevap verir.
+Yalnız programın sınamasından geçen cevaplar eğitim verisi olur. Eğitilen model (Qwen3.5-4B, 8 GB bilgisayarlar için)
+eğitimde görmediği sorularda ilke karnesi ve gelişim kapısıyla sınanır. Program onu **Zekâ › Eğitilmiş modeli ekle**
+ile alır ve gece kendi sınav setiyle yeniden sınar. **Zekâ › Kaggle eğitim paketi hazırla** düğmesi, kütüphaneyi ve
+altın soru setini bir sonraki eğitime taşır; her tur bir öncekinin üzerine kurulur. Ayrıntılar ve adımlar:
+[kaggle/BENIOKU.md](kaggle/BENIOKU.md).
 
 ## Resmî Yazı Hazırlama
 

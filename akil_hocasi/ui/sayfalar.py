@@ -15,7 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QTime, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
-                               QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton,
+                               QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton,
                                QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTimeEdit,
                                QVBoxLayout, QWidget)
 
@@ -993,6 +993,9 @@ class KaynakHavuzuSayfasi(QWidget):
             QDesktopServices.openUrl(QUrl(oge.text()))
 
 
+KAGGLE_REHBERI = "https://github.com/terrazi/akil-hocasi/blob/main/kaggle/BENIOKU.md"
+
+
 class ZekaSayfasi(QWidget):
     """Yapay zekâ ve çekirdek: modeller, ilkeler, Yordam Kitabı, ilke karnesi, dersler, ayarlar, gelişim geçmişi."""
 
@@ -1001,6 +1004,8 @@ class ZekaSayfasi(QWidget):
     sil_istendi = Signal(str)
     durdur_istendi = Signal()
     gelistir_istendi = Signal()
+    ozel_ekle_istendi = Signal(str)          # Kaggle'da eğitilmiş GGUF dosyası
+    paket_istendi = Signal(str, bool)        # Kaggle eğitim paketi: hedef dosya, gerçek sorular dahil mi
 
     def __init__(self, s, parent=None):
         super().__init__(parent)
@@ -1083,6 +1088,22 @@ class ZekaSayfasi(QWidget):
             satir.addWidget(d)
         satir.addStretch(1)
         yer.addLayout(satir)
+        kaggle = QHBoxLayout()
+        ekle = QPushButton("  Eğitilmiş modeli ekle…")
+        ekle.setIcon(ikon("arti", R["metin"], 16))
+        ekle.setToolTip("Kaggle'da eğitilen modelin .gguf dosyasını (yanındaki .json ile) programa ekler")
+        ekle.clicked.connect(self._ozel_model_sec)
+        paket = QPushButton("  Kaggle eğitim paketi hazırla…")
+        paket.setIcon(ikon("indir", R["metin"], 16))
+        paket.setToolTip("Kütüphaneyi ve altın soru setini bir sonraki Kaggle eğitimine taşıyan paket")
+        paket.clicked.connect(self._paket_hazirla)
+        nasil = QPushButton("Kaggle'da nasıl eğitilir?")
+        nasil.setObjectName("Hayalet")
+        nasil.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(KAGGLE_REHBERI)))
+        for d in (ekle, paket, nasil):
+            kaggle.addWidget(d)
+        kaggle.addStretch(1)
+        yer.addLayout(kaggle)
         self.indirme_cubugu = QProgressBar()
         self.indirme_cubugu.setRange(0, 1000)
         self.indirme_cubugu.setTextVisible(False)
@@ -1192,9 +1213,27 @@ class ZekaSayfasi(QWidget):
         secili = {t: (d.get(t) or {}).get("kimlik") for t in ("sohbet", "anlam")}
         bellek = don.get("bellek_gb", 0) or 0
         modeller = sorted(self.s.yz.katalog.modeller.values(), key=lambda m: (m.tur != "sohbet", -m.oncelik))
-        self._model_kimlikleri = [m.kimlik for m in modeller]
-        self.model_tablosu.setRowCount(len(modeller))
-        for i, m in enumerate(modeller):
+        ozeller = self.s.yz.ozel_modeller()
+        self._model_kimlikleri = [m["kimlik"] for m in ozeller] + [m.kimlik for m in modeller]
+        self.model_tablosu.setRowCount(len(ozeller) + len(modeller))
+        for i, m in enumerate(ozeller):                         # Kaggle'da eğitilmiş modeller en üstte
+            e = m.get("egitim") or {}
+            yerel = (m.get("yerel_sinav") or {}).get("sonuc")
+            aciklama = []
+            if e:
+                kt, ky = e.get("karne_temel") or {}, e.get("karne_yeni") or {}
+                aciklama.append(f"Kaggle sınavı: {'kapıyı geçti' if e.get('kapi') else 'kapıyı geçemedi'}"
+                                + (f", başarı %{round(100 * kt.get('basari', 0))} → %{round(100 * ky.get('basari', 0))}"
+                                   if kt and ky else ""))
+            aciklama.append({"benimsendi": "bu bilgisayarda benimsendi", "reddedildi": "bu bilgisayarda reddedildi"}
+                            .get(yerel, "bu bilgisayarda gece sınanacak"))
+            gerek = float(m.get("en_az_bellek_gb", 0) or 0)
+            uygun = "Uygun" if gerek <= bellek + 0.5 else f"En az {gerek:g} GB bellek"
+            durum = "Kullanılıyor" if secili.get(m.get("tur")) == m["kimlik"] else "Kurulu"
+            for j, metin in enumerate((f"{m.get('ad', m['kimlik'])} — {'; '.join(aciklama)}", "Danışma (eğitilmiş)",
+                                       f"{(m.get('boyut') or 0) / 1e9:.1f} GB", uygun, durum)):
+                self.model_tablosu.setItem(i, j, QTableWidgetItem(metin))
+        for i, m in enumerate(modeller, len(ozeller)):
             uygun = "Uygun" if m.en_az_bellek_gb <= bellek else f"En az {m.en_az_bellek_gb:g} GB bellek"
             if d.get("onerilen", {}).get(m.tur) == m.kimlik:
                 uygun = "Önerilen"
@@ -1272,6 +1311,25 @@ class ZekaSayfasi(QWidget):
     def _secili_kimlikler(self) -> list[str]:
         satirlar = sorted({i.row() for i in self.model_tablosu.selectedIndexes()})
         return [self._model_kimlikleri[r] for r in satirlar if 0 <= r < len(getattr(self, "_model_kimlikleri", []))]
+
+    def _ozel_model_sec(self) -> None:
+        yol, _ = QFileDialog.getOpenFileName(self, "Eğitilmiş model (GGUF)", "", "GGUF model (*.gguf)")
+        if yol:
+            self.ozel_ekle_istendi.emit(yol)
+
+    def _paket_hazirla(self) -> None:
+        cevap = QMessageBox.question(
+            self, "Kaggle eğitim paketi",
+            "Pakete kütüphane (mevzuat, TOGÜ belgeleri) ve altın soru seti girer.\n\n"
+            "Kullanıcıların sorduğu gerçek sorular da (kişisel veriler maskelenerek) eklensin mi? Bu, modelin kurumun "
+            "gerçek ihtiyacına göre eğitilmesini sağlar; paket Kaggle'a yükleneceği için kurum izniyle seçin.",
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel, QMessageBox.No)
+        if cevap == QMessageBox.Cancel:
+            return
+        varsayilan = str(Path.home() / f"akilhocasi_egitim_paketi_{datetime.now():%Y%m%d}.zip")
+        yol, _ = QFileDialog.getSaveFileName(self, "Paketi kaydet", varsayilan, "Zip (*.zip)")
+        if yol:
+            self.paket_istendi.emit(yol, cevap == QMessageBox.Yes)
 
     def _onerilenleri_kur(self) -> None:
         self.kur_istendi.emit([m.kimlik for m in self.s.yz.eksik_kurulum()])

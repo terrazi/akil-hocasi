@@ -243,3 +243,19 @@ class ZekaCalisani(QThread):
         except Exception as e:  # noqa: BLE001
             rapor = [f"Kendini geliştirme: HATA {e}"]
         self.bitti.emit(rapor)
+
+
+class IsCalisani(QThread):
+    """Uzun süren tek bir işi (dosya kopyalama, paket hazırlama) arka planda çalıştırır."""
+    bitti = Signal(object)
+    hata = Signal(str)
+
+    def __init__(self, is_, parent=None):
+        super().__init__(parent)
+        self.is_ = is_
+
+    def run(self) -> None:
+        try:
+            self.bitti.emit(self.is_())
+        except Exception as e:  # noqa: BLE001 - kullanıcıya gösterilir
+            self.hata.emit(str(e))

@@ -1,0 +1,65 @@
+# Akıl Hocası'nın yerel dil modelini Kaggle'da eğitir (GPU T4 x2). Kaggle hesabının API anahtarı gerekir:
+# depo › Settings › Secrets and variables › Actions › KAGGLE_USERNAME ve KAGGLE_KEY (kaggle.com › Settings › API).
+# Bir Kaggle oturumu ~11 saat sürer; bu iş defteri başlatır ("baslat") ya da durumunu/çıktısını alır ("durum").
+name: Kaggle eğitimi
+
+on:
+  workflow_dispatch:
+    inputs:
+      islem:
+        description: "baslat: defteri Kaggle'da çalıştır · durum: durumu ve (bittiyse) çıktıyı al"
+        type: choice
+        options: [durum, baslat]
+        default: durum
+      asama:
+        description: "veri: öğretmenle eğitim verisi üret (1. defter) · egit: modeli eğit ve sına (2. defter)"
+        type: choice
+        options: [veri, egit]
+        default: veri
+      tur:
+        description: "Veri turu numarası (veri aşaması; her tur öncekilerin üzerine ekler)"
+        default: "1"
+      veri_turu:
+        description: "Eğitimde kullanılacak veri turu sayısı (egit aşaması)"
+        default: "1"
+      sure_saat:
+        description: "Kaggle oturum süresi (saat, en çok 11.5)"
+        default: "10.5"
+      ogrenci:
+        description: "Öğrenci model (8 GB bilgisayar: 4B)"
+        type: choice
+        options: ["4B", "2B"]
+        default: "4B"
+      veri_seti:
+        description: "İsteğe bağlı: programdan alınan eğitim paketinin Kaggle veri seti (kullanici/ad)"
+        default: ""
+
+jobs:
+  kaggle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Kaggle aracı
+        run: pip install -q --upgrade kaggle
+      - name: Kaggle
+        id: kaggle
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: >
+          python kaggle/kaggle_api.py ${{ inputs.islem }} ${{ inputs.asama }}
+          --tur ${{ inputs.tur }} --veri-turu ${{ inputs.veri_turu }} --sure-saat ${{ inputs.sure_saat }}
+          --ogrenci ${{ inputs.ogrenci }} ${{ inputs.veri_seti != '' && format('--veri-seti {0}', inputs.veri_seti) || '' }}
+      - name: Eğitilmiş modeli sakla
+        if: inputs.islem == 'durum' && inputs.asama == 'egit' && steps.kaggle.outputs.durum == 'bitti'
+        uses: actions/upload-artifact@v4
+        with:
+          name: akilhocasi-model
+          path: kaggle_cikti/**/akilhocasi_model/
+          if-no-files-found: ignore
+          retention-days: 30
+          compression-level: 0

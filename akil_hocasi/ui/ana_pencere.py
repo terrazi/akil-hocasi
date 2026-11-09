@@ -16,8 +16,8 @@ from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainW
 from .. import UYGULAMA_ADI
 from ..answer.modeller import Cevap, Durum
 from ..crawler.zamanlayici import GOREVLER
-from .calisanlar import (AdayModelCalisani, AnlamCalisani, ModelIndirmeCalisani, OgrenmeCalisani, TaramaCalisani,
-                         YZBaslatici, ZekaCalisani)
+from .calisanlar import (AdayModelCalisani, AnlamCalisani, IsCalisani, ModelIndirmeCalisani, OgrenmeCalisani,
+                         TaramaCalisani, YZBaslatici, ZekaCalisani)
 from .danisma import DanismaSayfasi
 from .hizli_yakala import CanliMetinPenceresi, YakalamaKatmani
 from .ikonlar import ikon, logo_pixmap
@@ -300,6 +300,8 @@ class AnaPencere(QMainWindow):
         self.zeka.sil_istendi.connect(self._model_sil)
         self.zeka.durdur_istendi.connect(lambda: self._indirme and self._indirme.durdur.set())
         self.zeka.gelistir_istendi.connect(lambda: self.kendini_gelistir(elle=True))
+        self.zeka.ozel_ekle_istendi.connect(self._ozel_model_ekle)
+        self.zeka.paket_istendi.connect(self._egitim_paketi)
         self.sayfalar = {"danisma": self.danisma, "yazi": self.yazi, "hesap": hesap, "kontrol": kontrol,
                          "depo": self.depo_sayfa, "havuz": self.havuz, "degisti": self.degisti, "zeka": self.zeka,
                          "ayarlar": self.ayarlar_sayfa}
@@ -441,6 +443,43 @@ class AnaPencere(QMainWindow):
         self._bildirim("Model kurulumu", sonuc.get("mesaj", "")[:200])
         self.zeka.yenile()
         self._model_yukle()
+
+    def _arka_planda(self, is_, basladi: str, bitti) -> None:
+        if getattr(self, "_is_calisani", None) and self._is_calisani.isRunning():
+            self.zeka.indirme_bitti("Önceki işlem sürüyor; bitince yeniden deneyin.")
+            return
+        self.zeka.indirme_bitti(basladi)
+        self._is_calisani = IsCalisani(is_, self)
+        self._is_calisani.bitti.connect(bitti)
+        self._is_calisani.hata.connect(lambda h: self.zeka.indirme_bitti("İşlem tamamlanamadı: " + h))
+        self._is_calisani.start()
+
+    def _ozel_model_ekle(self, yol: str) -> None:
+        """Kaggle'da eğitilmiş modeli ekler. Kaggle sınavında kapıyı geçtiyse öncelikli olur; bu bilgisayarın
+        sınav setiyle gece ayrıca temel modele karşı sınanır, kötü çıkarsa temel modele dönülür."""
+        def bitti(bilgi: dict) -> None:
+            e = bilgi.get("egitim") or {}
+            mesaj = (f"{bilgi['ad']} eklendi. " + ("Kaggle sınavında gelişim kapısını geçtiği için kullanılacak; "
+                                                    if e.get("kapi") else "Kaggle sınavında kapıyı geçemediği için "
+                                                    "yalnız yarışmada denenecek; ")
+                     + "bu bilgisayarın sınav setiyle gece ayrıca sınanacak.")
+            self.zeka.indirme_bitti(mesaj)
+            self._bildirim("Eğitilmiş model", mesaj[:200])
+            self.zeka.yenile()
+            if e.get("kapi"):
+                self._model_yukle(degistir=bilgi["kimlik"])      # sunucu eğitilmiş modelle yeniden başlar
+        self._arka_planda(lambda: self.s.yz.ozel_model_ekle(yol), "Model dosyası kopyalanıyor…", bitti)
+
+    def _egitim_paketi(self, yol: str, gercek: bool) -> None:
+        from ..yz.kaggle_paketi import paket_olustur
+
+        def bitti(m: dict) -> None:
+            self.zeka.indirme_bitti(f"Kaggle eğitim paketi hazır: {m['dosya']} ({m['boyut_mb']} MB; {m['belge']} belge, "
+                                    f"{m['soru']} soru). Kaggle'da veri seti olarak yükleyip 1. deftere ekleyin.")
+            from .sayfalar import klasorde_goster
+            klasorde_goster(m["dosya"])
+        self._arka_planda(lambda: paket_olustur(self.s.kutuphane, yol, gercek), "Kaggle eğitim paketi hazırlanıyor…",
+                          bitti)
 
     def _model_kullan(self, kimlik: str) -> None:
         if not any(m["kimlik"] == kimlik for m in self.s.yz.kurulu()):
@@ -854,7 +893,7 @@ class AnaPencere(QMainWindow):
         yazi_calisani = getattr(self.yazi, "calisan", None)
         danisma_calisani = getattr(self.danisma, "calisan", None)
         for t in (self._tarama, self._takip, self._ogrenme, self._aday, self._indirme, self._anlam_calisani, self._zeka,
-                  self._yz_baslatici, yazi_calisani, danisma_calisani):
+                  self._yz_baslatici, yazi_calisani, danisma_calisani, getattr(self, "_is_calisani", None)):
             if t and t.isRunning():
                 t.wait(bekle_ms)
         self.s.yz.durdur()

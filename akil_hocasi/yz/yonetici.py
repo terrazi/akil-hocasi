@@ -9,8 +9,11 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
+import re
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from ..answer.llm import BosModel, model_yukle
@@ -57,10 +60,59 @@ class YZYoneticisi:
 
         def oncelik(m):
             t = self.katalog.getir(m["kimlik"])
-            return t.oncelik if t else 0
-        uygun = [m for m in kurulu if (self.katalog.getir(m["kimlik"]) is None
-                                       or self.katalog.getir(m["kimlik"]).en_az_bellek_gb <= bellek_gb()[0] + 0.5)]
+            if t:
+                return t.oncelik
+            if (m.get("yerel_sinav") or {}).get("sonuc") == "reddedildi":
+                return 0                              # bu bilgisayardaki sınavda temel modelden kötü çıktı
+            return int(m.get("oncelik", 0))           # katalog dışı (ör. Kaggle'da eğitilmiş) model
+
+        def bellek_yeter(m):
+            t = self.katalog.getir(m["kimlik"])
+            gerek = t.en_az_bellek_gb if t else float(m.get("en_az_bellek_gb", 0))
+            return gerek <= bellek_gb()[0] + 0.5
+        uygun = [m for m in kurulu if bellek_yeter(m)]
         return max(uygun or kurulu, key=oncelik)
+
+    def ozel_modeller(self) -> list[dict]:
+        """Katalog dışı kurulu modeller (Kaggle'da eğitilmiş ya da elle eklenmiş)."""
+        return [m for m in self.kurulu() if self.katalog.getir(m["kimlik"]) is None]
+
+    def ozel_model_ekle(self, gguf: str | Path) -> dict:
+        """Eğitilmiş GGUF modelini (yanındaki aynı adlı .json üst bilgisiyle) model klasörüne ekler."""
+        import shutil
+        kaynak = Path(gguf)
+        with open(kaynak, "rb") as f:
+            if f.read(4) != b"GGUF":
+                raise ModelHatasi("Seçilen dosya GGUF model dosyası değil")
+        bilgi = {}
+        js = kaynak.with_suffix(".json")
+        if js.is_file():
+            try:
+                bilgi = json.loads(js.read_text(encoding="utf-8"))
+            except ValueError:
+                bilgi = {}
+        kimlik = re.sub(r"[^a-z0-9._-]+", "-", str(bilgi.get("kimlik") or kaynak.stem).lower()).strip("-")[:60]
+        if self.katalog.getir(kimlik):
+            kimlik += "-ozel"
+        bilgi.update({"kimlik": kimlik, "tur": bilgi.get("tur", "sohbet"), "ad": bilgi.get("ad") or kaynak.stem,
+                      "baglam": int(bilgi.get("baglam", 8192)), "dusunme": bool(bilgi.get("dusunme", False)),
+                      "dosya": f"{kimlik}.gguf", "boyut": kaynak.stat().st_size, "kaynak": bilgi.get("kaynak", "elle"),
+                      "eklenme": datetime.now().isoformat(timespec="seconds")})
+        bilgi.setdefault("oncelik", 75 if (bilgi.get("egitim") or {}).get("kapi") else 40)
+        hedef = self.model_klasoru() / f"{kimlik}.gguf"
+        if kaynak.resolve() != hedef.resolve():
+            shutil.copy2(kaynak, hedef)
+        hedef.with_suffix(".json").write_text(json.dumps(bilgi, ensure_ascii=False, indent=1), encoding="utf-8")
+        bilgi["yol"] = str(hedef)
+        return bilgi
+
+    def ust_bilgi_guncelle(self, kimlik: str, **alanlar) -> None:
+        for m in self.kurulu():
+            if m["kimlik"] == kimlik:
+                js = Path(m["yol"]).with_suffix(".json")
+                veri = json.loads(js.read_text(encoding="utf-8"))
+                veri.update(alanlar)
+                js.write_text(json.dumps(veri, ensure_ascii=False, indent=1), encoding="utf-8")
 
     def _sohbet_secimi(self) -> dict | None:
         """Kullanıcının elle seçtiği GGUF dosyası (Ayarlar) önceliklidir; yoksa katalogdan kurulu en uygun model."""

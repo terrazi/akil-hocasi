@@ -1,0 +1,508 @@
+"""Damıtma: büyük öğretmen modelin bilgisini, programın kendi çekirdek iş akışı üzerinden küçük modele aktarmak.
+
+Kaggle GPU'sunda büyük bir açık model (öğretmen, ör. Qwen3.5-35B-A3B) çalışır. Program, kütüphanesindeki gerçek
+mevzuattan personel soruları üretir ve öğretmen bu soruları **programın kendi yordamlarıyla** cevaplar: durum
+çözümleme, gerekçeli sentez, öz eleştiri, düzeltme, hatadan ders çıkarma, çalışma sorusu üretme ve resmî yazı.
+Her model çağrısı (programın gönderdiği istem ve öğretmenin cevabı) kaydedilir. Yalnızca programın sınamasından
+geçen çağrılar eğitim örneği olur: doğrulanamayan cümle içeren, beklenen dayanağı bulamayan ya da biçimi bozuk
+cevaplar atılır. Böylece küçük model, çalışırken göreceği istemlerin aynısıyla ve yalnız doğrulanmış cevaplarla
+eğitilir (çekirdeğe uyum).
+
+Çıktı (JSONL, satır başına bir örnek):
+  {"gorev": "sentez", "messages": [{system}, {user}], "cevap": "...", "bolum": "egitim"|"sinav", "soru_id": "..."}
+Sınav bölümündeki soruların hiçbir çağrısı eğitime girmez; eğitilen modelin karnesi bu sorularla çıkarılır.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import re
+import threading
+import time
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from ..cekirdek.ilkeler import sistem_cekirdegi
+from .sunucu import ModelHatasi, onbellek_dostu
+
+log = logging.getLogger("akilhocasi")
+_DUSUNCE = re.compile(r"<think>.*?</think>", re.S)
+
+GELEN_YAZI_SEMASI = {
+    "type": "object",
+    "properties": {
+        "gelen_yazi": {"type": "string"},
+        "talimat": {"type": "string"},
+        "tur": {"type": "string", "enum": ["cevap", "bilgi_isteme", "gorus", "talep", "duyuru", "ek_gonderme", "olur"]},
+    },
+    "required": ["gelen_yazi", "talimat", "tur"],
+}
+GELEN_YAZI_GOREVI = (
+    "Bir üniversitenin idari birimine gelebilecek gerçekçi bir resmî yazı örneği yaz (eğitim için kurgu). "
+    "Yazı aşağıdaki mevzuat maddesinin uygulanmasıyla ilgili olsun. Biçim: 'T.C.' satırı, idare adı büyük harfle, "
+    "birim adı, 'Sayı : E-<8 rakam>-<dosya kodu>-<6 rakam>' ve aynı satırda GG.AA.YYYY tarih, 'Konu :' satırı, "
+    "muhatap (büyük harf, yönelme hâli), metin (istenen husus açıkça yazılı) ve imza. Kişi adları kurgu olsun; "
+    "gerçek T.C. kimlik no, IBAN yazma. Ardından talimat alanına, bu yazıya cevap verecek birimin söyleyeceği "
+    "kısa cevabı yaz (birimin bildiği somut bilgi; mevzuat hükmünü tekrar etme). tur alanına yazı türünü yaz.")
+
+# Görev sınıflandırması: istemde geçen sabit görev metninin başı (önce özgül olanlar)
+_GOREV_IZLERI: list[tuple[str, str]] = []
+
+
+def _gorev_izleri() -> list[tuple[str, str]]:
+    if _GOREV_IZLERI:
+        return _GOREV_IZLERI
+    from ..answer.hat import DUZELTME_GOREVI, ELESTIRI_GOREVI, SENTEZ_GOREVI
+    from ..cekirdek.dersler import DersHafizasi
+    from ..cekirdek.muhakeme import COZUMLEME_GOREVI
+    from ..yazi.hazirlayici import DUZELTME_GOREVI as YAZI_DUZELTME_GOREVI
+    from ..yazi.hazirlayici import YAZI_GOREVI
+    from .oz_gelisim import SORU_GOREVI
+    for gorev, metin in (("ogretmen", GELEN_YAZI_GOREVI), ("yazi_duzeltme", YAZI_DUZELTME_GOREVI),
+                         ("yazi", YAZI_GOREVI), ("duzeltme", DUZELTME_GOREVI), ("elestiri", ELESTIRI_GOREVI),
+                         ("sentez", SENTEZ_GOREVI), ("cozumleme", COZUMLEME_GOREVI),
+                         ("ders", DersHafizasi.DERS_GOREVI), ("soru", SORU_GOREVI)):
+        _GOREV_IZLERI.append((gorev, metin[:70]))
+    return _GOREV_IZLERI
+
+
+def gorev_turu(mesajlar: list[dict]) -> str:
+    metin = "\n".join(str(m.get("content", "")) for m in mesajlar)
+    for gorev, iz in _gorev_izleri():
+        if iz in metin:
+            return gorev
+    return "diger"
+
+
+@dataclass
+class Cagri:
+    gorev: str
+    mesajlar: list[dict]
+    cevap: str
+    json: bool
+    dusunce: int = 0                 # öğretmenin düşünme uzunluğu (karakter; yalnız istatistik)
+    sure: float = 0.0
+
+
+class OgretmenModeli:
+    """llama-server'daki öğretmen için istemci. Kilitsizdir: sunucu çok yuvalı (-np) çalışır, sorular paralel
+    işlenir. Her çağrı, o iş parçacığında açık kayıt varsa kayda eklenir."""
+
+    hazir = True
+
+    def __init__(self, adres: str, ad: str = "öğretmen", dusunen_gorevler: tuple[str, ...] = ("sentez", "duzeltme",
+                                                                                                 "yazi", "yazi_duzeltme"),
+                 zaman_asimi: float = 900):
+        self.adres, self.ad = adres.rstrip("/"), ad
+        self.dusunen = set(dusunen_gorevler)
+        self.zaman_asimi = zaman_asimi
+        self._yerel = threading.local()
+        self.sayac = {"cagri": 0, "hata": 0}
+        self._sayac_kilit = threading.Lock()
+
+    @contextmanager
+    def kayit(self):
+        onceki = getattr(self._yerel, "kayit", None)
+        self._yerel.kayit = []
+        try:
+            yield self._yerel.kayit
+        finally:
+            self._yerel.kayit = onceki
+
+    def sohbet(self, mesajlar, max_tokens=900, sicaklik=0.2, json_mod=False, json_sema=None, dusunme=False,
+               akis=None) -> str:
+        mesajlar = onbellek_dostu(mesajlar)
+        gorev = gorev_turu(mesajlar)
+        dusun = gorev in self.dusunen
+        govde = {"messages": mesajlar, "max_tokens": max_tokens + (3000 if dusun else 0), "temperature": sicaklik,
+                 "top_p": 0.9, "cache_prompt": True, "chat_template_kwargs": {"enable_thinking": dusun}}
+        if json_sema:
+            govde["response_format"] = {"type": "json_schema", "json_schema": {"name": "cikti", "schema": json_sema}}
+        elif json_mod:
+            govde["response_format"] = {"type": "json_object"}
+        bas = time.monotonic()
+        istek = urllib.request.Request(f"{self.adres}/v1/chat/completions", json.dumps(govde).encode("utf-8"),
+                                       headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(istek, timeout=self.zaman_asimi) as y:  # noqa: S310 - yerel sunucu
+                veri = json.loads(y.read().decode("utf-8"))
+        except Exception as e:  # noqa: BLE001
+            with self._sayac_kilit:
+                self.sayac["hata"] += 1
+            raise ModelHatasi(f"Öğretmen isteği başarısız: {e}") from e
+        mesaj = veri["choices"][0]["message"]
+        icerik = mesaj.get("content") or ""
+        dusunce = mesaj.get("reasoning_content") or ""
+        if "<think>" in icerik:
+            dusunce += "".join(re.findall(r"<think>(.*?)</think>", icerik, re.S))
+            icerik = _DUSUNCE.sub("", icerik)
+        icerik = icerik.strip()
+        with self._sayac_kilit:
+            self.sayac["cagri"] += 1
+        kayit = getattr(self._yerel, "kayit", None)
+        if kayit is not None:
+            kayit.append(Cagri(gorev, mesajlar, icerik, bool(json_sema or json_mod), len(dusunce),
+                               round(time.monotonic() - bas, 1)))
+        return icerik
+
+
+def _json_gecerli(metin: str) -> dict | None:
+    from ..answer.llm import json_cikar
+    v = json_cikar(metin)
+    return v if isinstance(v, dict) else None
+
+
+def bolum_sec(soru: str) -> str:
+    """Soru metnine göre kalıcı ayrım: üçte biri sınav (eğitime hiç girmez)."""
+    return "sinav" if int(hashlib.md5(soru.strip().encode("utf-8")).hexdigest(), 16) % 3 == 0 else "egitim"
+
+
+@dataclass
+class DamitmaRaporu:
+    soru: int = 0
+    gecen_cevap: int = 0
+    ornek: dict[str, int] = field(default_factory=dict)
+    atilan: dict[str, int] = field(default_factory=dict)
+    yazi: int = 0
+    sure_sn: float = 0.0
+
+    def say(self, sozluk: dict, anahtar: str, n: int = 1) -> None:
+        sozluk[anahtar] = sozluk.get(anahtar, 0) + n
+
+    def ozet(self) -> str:
+        ornek = ", ".join(f"{k} {v}" for k, v in sorted(self.ornek.items()))
+        atilan = ", ".join(f"{k} {v}" for k, v in sorted(self.atilan.items()))
+        return (f"{self.soru} soru işlendi, {self.gecen_cevap} cevap sınamadan geçti, {self.yazi} resmî yazı; "
+                f"örnekler: {ornek or '—'}; atılan: {atilan or '—'}; {self.sure_sn / 60:.0f} dk")
+
+
+class Damitici:
+    """Öğretmenle veri üretir. s: hat, kutuphane, dersler (ve GeceZekaCalismasi için yz/ayarlar) taşıyan nesne."""
+
+    def __init__(self, s, ogretmen: OgretmenModeli, cikti: Path, bildir=None):
+        self.s, self.ogretmen = s, ogretmen
+        self.cikti = Path(cikti)
+        self.cikti.mkdir(parents=True, exist_ok=True)
+        self.bildir = bildir or (lambda m: log.info(m))
+        self.rapor = DamitmaRaporu()
+        self._yaz_kilit = threading.Lock()
+        self.ornek_dosyasi = self.cikti / "ornekler.jsonl"
+        self.sinav_dosyasi = self.cikti / "sinav.jsonl"
+        self.islenen = self._islenenler()
+        from .oz_gelisim import SEMA as SENTETIK_SEMA
+        with s.kutuphane._kilit, s.kutuphane.db:
+            s.kutuphane.db.executescript(SENTETIK_SEMA)
+
+    # ------------------------------------------------------------------ kayıt
+    def _islenenler(self) -> set[str]:
+        """Kaldığı yerden sürdürme: daha önce işlenmiş soru kimlikleri."""
+        islenen = set()
+        for dosya in (self.cikti / "islenen.txt",):
+            if dosya.is_file():
+                islenen.update(x.strip() for x in dosya.read_text("utf-8").splitlines() if x.strip())
+        return islenen
+
+    def _yaz(self, kayitlar: list[dict], soru_id: str = "", sinav: dict | None = None) -> None:
+        with self._yaz_kilit:
+            with self.ornek_dosyasi.open("a", encoding="utf-8") as f:
+                for k in kayitlar:
+                    f.write(json.dumps(k, ensure_ascii=False) + "\n")
+                    self.rapor.say(self.rapor.ornek, k["gorev"])
+            if sinav:
+                with self.sinav_dosyasi.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(sinav, ensure_ascii=False) + "\n")
+            if soru_id:
+                with (self.cikti / "islenen.txt").open("a", encoding="utf-8") as f:
+                    f.write(soru_id + "\n")
+                self.islenen.add(soru_id)
+
+    @staticmethod
+    def _ornek(c: Cagri, bolum: str, soru_id: str) -> dict:
+        return {"gorev": c.gorev, "messages": c.mesajlar, "cevap": c.cevap, "json": c.json, "bolum": bolum,
+                "soru_id": soru_id}
+
+    # ------------------------------------------------------------------ 1 çalışma soruları
+    def sorular_uret(self, sinir: int, bitis: float) -> int:
+        """Programın kendi soru üretme yordamı (GeceZekaCalismasi) öğretmenle çalışır; geçerli soru üreten çağrılar
+        "soru" görevinin eğitim örneği olur."""
+        from .oz_gelisim import GeceZekaCalismasi
+        gz = GeceZekaCalismasi(self.s, self.bildir)
+        eski_model = self.s.hat.model
+        self.s.hat.model = self.ogretmen
+        once = self._sentetik_sayisi()
+        try:
+            with self.ogretmen.kayit() as kayit:
+                gz.sentetik_uret(sinir, bitis)
+        finally:
+            self.s.hat.model = eski_model
+        uretilen = self._sentetik_sayisi() - once
+        ornekler = []
+        for c in kayit:
+            v = _json_gecerli(c.cevap)
+            sorular = [str(q.get("soru", "")).strip() for q in (v or {}).get("sorular", []) if isinstance(q, dict)]
+            if c.gorev == "soru" and sorular and all(15 <= len(q) <= 300 for q in sorular):
+                ornekler.append(self._ornek(c, "egitim", ""))
+            else:
+                self.rapor.say(self.rapor.atilan, "soru")
+        self._yaz(ornekler)
+        self.bildir(f"Çalışma sorusu: {uretilen} geçerli soru üretildi ({len(ornekler)} örnek)")
+        return uretilen
+
+    def _sentetik_sayisi(self) -> int:
+        try:
+            return self.s.kutuphane.db.execute("SELECT COUNT(*) FROM yz_sentetik WHERE durum='dogrulandi'").fetchone()[0]
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def soru_havuzu(self, ek_sorular: list[dict] | None = None) -> list[dict]:
+        """İşlenmemiş sorular: programın ürettiği doğrulanmış çalışma soruları + (varsa) kullanıcı paketindeki
+        gerçek sorular ve altın set."""
+        havuz = []
+        for r in self.s.kutuphane.db.execute(
+                "SELECT id, soru, dayanak FROM yz_sentetik WHERE durum='dogrulandi' ORDER BY id").fetchall():
+            havuz.append({"id": f"s{r['id']}", "soru": r["soru"], "dayanak": json.loads(r["dayanak"] or "[]")})
+        for i, e in enumerate(ek_sorular or []):
+            havuz.append({"id": e.get("id") or f"k{i}", "soru": e["soru"], "dayanak": e.get("dayanak", [])})
+        return [h for h in havuz if h["id"] not in self.islenen]
+
+    # ------------------------------------------------------------------ 2 danışma akışı
+    def soru_isle(self, h: dict) -> None:
+        """Bir soruyu programın danışma hattında öğretmenle cevaplar, çağrıları sınar ve kaydeder."""
+        from ..ogrenme.degerlendirme import altin_sonucu
+        bolum = bolum_sec(h["soru"])
+        try:
+            with self.ogretmen.kayit() as kayit:
+                c = self.s.hat.cevapla(h["soru"], "derin", kayit=False)
+        except Exception as e:  # noqa: BLE001
+            self.rapor.say(self.rapor.atilan, "hata")
+            log.warning("Soru işlenemedi: %s", e)
+            self._yaz([], h["id"])
+            return
+        self.rapor.soru += 1
+        sinav = {"soru": h["soru"], "beklenen_dayanak": h["dayanak"], "id": h["id"]} if bolum == "sinav" else None
+        if bolum == "sinav":                          # sınav sorusunun hiçbir çağrısı eğitime girmez
+            self._yaz([], h["id"], sinav)
+            return
+        gecti, _kritik = altin_sonucu(c, h["dayanak"], "")
+        den = c.denetim or {}
+        temiz = (c.durum.value == "Doğrulandı" and gecti and not den.get("alintiya_donus")
+                 and not den.get("dogruluk_cikarilan") and not den.get("somutluk_cikarilan"))
+        bulunan = {f"{k.pasaj.belge_kimlik}/{k.pasaj.madde_no}" for k in c.kaynaklar} | {
+            k.pasaj.belge_kimlik for k in c.kaynaklar}
+        dayanak_yok = bool(h["dayanak"]) and not any(d in bulunan for d in h["dayanak"])
+        duzeltildi = any(k.gorev == "duzeltme" for k in kayit)
+        ornekler, hatalar = [], []
+        for k in kayit:
+            v = _json_gecerli(k.cevap) if k.json else None
+            if k.json and v is None:
+                self.rapor.say(self.rapor.atilan, f"{k.gorev}:bozuk")
+                continue
+            if k.gorev == "cozumleme":
+                ok = bool(v and v.get("personel_turu") and isinstance(v.get("alt_sorular", []), list))
+            elif k.gorev == "sentez":
+                durust_yok = dayanak_yok and v and v.get("guven") == "hukum_yok" and not v.get("kisa_cevap")
+                ok = (temiz and not duzeltildi) or bool(durust_yok)
+            elif k.gorev == "duzeltme":
+                ok = temiz
+            elif k.gorev == "elestiri":
+                ok = temiz or bool(v and v.get("sorunlar"))      # gerçek sorun bulan eleştiri de değerli
+            else:
+                ok = False
+            if ok:
+                ornekler.append(self._ornek(k, bolum, h["id"]))
+            else:
+                self.rapor.say(self.rapor.atilan, k.gorev)
+        for x in den.get("cikarilanlar", [])[:8]:
+            hatalar.append(f"[{x.get('test', '')}] {x.get('metin', '')[:160]} — {x.get('neden', '')[:120]}")
+        if temiz:
+            self.rapor.gecen_cevap += 1
+        if hatalar:
+            ornekler += self._ders_ornekleri(h["soru"], hatalar, bolum, h["id"])
+        self._yaz(ornekler, h["id"])
+
+    def _ders_ornekleri(self, soru: str, hatalar: list[str], bolum: str, soru_id: str) -> list[dict]:
+        """Öğretmen, sınamada çıkarılan cümlelerden yöntem dersi çıkarır; çekirdeğin ders süzgecinden geçen
+        (sayı/madde içermeyen, ilkeyi zayıflatmayan) dersler örnek olur."""
+        from ..cekirdek.dersler import ders_gecerli_mi
+        with self.ogretmen.kayit() as kayit:
+            try:
+                self.s.dersler.hatadan_cikar(self.ogretmen, soru, hatalar, kaynak="damitma")
+            except Exception:  # noqa: BLE001
+                return []
+        cikti = []
+        for k in kayit:
+            v = _json_gecerli(k.cevap) or {}
+            dersler = [d for d in v.get("dersler", []) if isinstance(d, dict)]
+            if k.gorev == "ders" and dersler and all(ders_gecerli_mi(str(d.get("ders", "")))[0] for d in dersler):
+                cikti.append(self._ornek(k, bolum, soru_id))
+            else:
+                self.rapor.say(self.rapor.atilan, "ders")
+        return cikti
+
+    def sorulari_isle(self, havuz: list[dict], bitis: float, paralel: int = 4) -> None:
+        bas = time.monotonic()
+        with ThreadPoolExecutor(max_workers=max(1, paralel)) as ex:
+            bekleyen = set()
+            sira = iter(havuz)
+            for _ in range(paralel * 2):
+                h = next(sira, None)
+                if h is None:
+                    break
+                bekleyen.add(ex.submit(self.soru_isle, h))
+            while bekleyen:
+                bitti = next(as_completed(bekleyen))
+                bekleyen.discard(bitti)
+                if self.rapor.soru and self.rapor.soru % 20 == 0:
+                    self.bildir(f"{self.rapor.ozet()} (geçen süre {(time.monotonic() - bas) / 60:.0f} dk)")
+                if time.monotonic() < bitis:
+                    h = next(sira, None)
+                    if h is not None:
+                        bekleyen.add(ex.submit(self.soru_isle, h))
+
+    # ------------------------------------------------------------------ 3 resmî yazı
+    def yazilar_uret(self, sinir: int, bitis: float, profil: dict | None = None) -> int:
+        """Öğretmen kurgu bir gelen yazı ve birimin cevabını yazar; program yazı akışını öğretmenle çalıştırır.
+        Sınamadan ve kontrol listesinden hatasız geçen yazının model çağrısı örnek olur."""
+        from ..yazi.gelen import cozumle
+        from ..yazi.hazirlayici import YaziHazirlayici, YaziIstegi
+        profil = profil or {"idare": "TOKAT GAZİOSMANPAŞA ÜNİVERSİTESİ", "birim": "Personel Daire Başkanlığı",
+                            "imza_ad": "Ad", "imza_soyad": "Soyad", "imza_unvan": "Daire Başkanı"}
+        satirlar = self.s.kutuphane.db.execute(
+            "SELECT m.madde_no, m.baslik, m.metin, b.baslik AS belge FROM maddeler m JOIN belgeler b ON b.id=m.belge_id"
+            " WHERE m.yururluk_bitis IS NULL AND m.mulga=0 AND length(m.metin) > 80 ORDER BY RANDOM() LIMIT ?",
+            (sinir,)).fetchall()
+        eski_model = self.s.hat.model
+        self.s.hat.model = self.ogretmen
+        h = YaziHazirlayici(self.s.hat, self.s.dersler)
+        n = 0
+        try:
+            for r in satirlar:
+                if time.monotonic() > bitis:
+                    break
+                try:
+                    ham = self.ogretmen.sohbet(
+                        [{"role": "system", "content": sistem_cekirdegi(GELEN_YAZI_GOREVI)},
+                         {"role": "user", "content": f"{r['belge']} — madde {r['madde_no']} {r['baslik'] or ''}\n"
+                                                     f"{r['metin'][:1800]}"}],
+                        max_tokens=900, sicaklik=0.7, json_sema=GELEN_YAZI_SEMASI)
+                    v = _json_gecerli(ham) or {}
+                    if len(str(v.get("gelen_yazi", ""))) < 200 or not str(v.get("talimat", "")).strip():
+                        self.rapor.say(self.rapor.atilan, "gelen_yazi")
+                        continue
+                    gelen = cozumle(str(v["gelen_yazi"]))
+                    tur = v.get("tur") if v.get("tur") in ("cevap", "gorus", "bilgi_isteme", "talep") else "cevap"
+                    with self.ogretmen.kayit() as kayit:
+                        sonuc = h.hazirla(YaziIstegi(tur=tur, talimat=str(v["talimat"]), gelen=gelen, profil=profil))
+                except Exception as e:  # noqa: BLE001
+                    self.rapor.say(self.rapor.atilan, "yazi:hata")
+                    log.warning("Yazı örneği üretilemedi: %s", e)
+                    continue
+                kimlik = "y" + hashlib.md5(str(v.get("gelen_yazi", "")).encode("utf-8")).hexdigest()[:10]
+                bolum = bolum_sec(str(v.get("gelen_yazi", "")))
+                temiz = sonuc.model_kullanildi and not sonuc.cikarilanlar and sonuc.hata_sayisi == 0
+                ornekler = []
+                for k in kayit:
+                    if k.gorev in ("yazi", "yazi_duzeltme") and temiz and bolum == "egitim":
+                        ornekler.append(self._ornek(k, bolum, kimlik))
+                    elif k.gorev in ("cozumleme",) and bolum == "egitim" and _json_gecerli(k.cevap):
+                        ornekler.append(self._ornek(k, bolum, kimlik))
+                    elif k.gorev in ("yazi", "yazi_duzeltme"):
+                        self.rapor.say(self.rapor.atilan, "yazi")
+                self._yaz(ornekler)
+                n += int(temiz)
+                self.rapor.yazi += int(temiz)
+        finally:
+            self.s.hat.model = eski_model
+        return n
+
+    # ------------------------------------------------------------------ hepsi
+    def calistir(self, sure_dk: float, soru_hedefi: int = 4000, yazi_orani: float = 0.15, paralel: int = 4,
+                 ek_sorular: list[dict] | None = None, profil: dict | None = None) -> DamitmaRaporu:
+        bas = time.monotonic()
+        bitis = bas + sure_dk * 60
+        eski_model = self.s.hat.model
+        self.s.hat.model = self.ogretmen                # programın bütün yordamları öğretmenle çalışır
+        try:
+            return self._calistir(bas, bitis, soru_hedefi, yazi_orani, paralel, ek_sorular, profil)
+        finally:
+            self.s.hat.model = eski_model
+
+    def _calistir(self, bas, bitis, soru_hedefi, yazi_orani, paralel, ek_sorular, profil) -> DamitmaRaporu:
+        havuz = self.soru_havuzu(ek_sorular)
+        if len(havuz) < soru_hedefi:
+            self.bildir(f"Çalışma soruları üretiliyor ({len(havuz)} hazır, hedef {soru_hedefi})")
+            pay = bas + (bitis - bas) * 0.25         # sürenin en çok dörtte biri soru üretimine
+            self.sorular_uret(max(0, soru_hedefi - len(havuz)) // 2 + 1, pay)
+            havuz = self.soru_havuzu(ek_sorular)
+        yazi_bitis = bitis - (bitis - time.monotonic()) * yazi_orani
+        self.bildir(f"{len(havuz)} soru öğretmenle cevaplanıyor (paralel {paralel})")
+        self.sorulari_isle(havuz[:soru_hedefi], yazi_bitis, paralel)
+        if yazi_orani > 0 and time.monotonic() < bitis:
+            self.bildir("Resmî yazı örnekleri üretiliyor")
+            self.yazilar_uret(400, bitis, profil)
+        self.rapor.sure_sn = time.monotonic() - bas
+        (self.cikti / "rapor.json").write_text(json.dumps(self.rapor.__dict__, ensure_ascii=False, indent=1), "utf-8")
+        self.bildir("Damıtma bitti: " + self.rapor.ozet())
+        return self.rapor
+
+
+# ---------------------------------------------------------------------------- eğitim verisi hazırlama
+GOREV_PAYLARI = {"sentez": 0.32, "cozumleme": 0.16, "elestiri": 0.10, "duzeltme": 0.10, "yazi": 0.12,
+                 "yazi_duzeltme": 0.03, "soru": 0.08, "ders": 0.06, "diger": 0.0, "ogretmen": 0.0}
+
+
+def ornekleri_oku(dosyalar: list[Path]) -> list[dict]:
+    """Örnek dosyalarını okur; yinelenenleri (aynı istem) ve eğitim dışı görevleri ayıklar."""
+    gorulen, cikti = set(), []
+    for d in dosyalar:
+        if not Path(d).is_file():
+            continue
+        for satir in Path(d).read_text("utf-8").splitlines():
+            try:
+                o = json.loads(satir)
+            except ValueError:
+                continue
+            if o.get("bolum") != "egitim" or GOREV_PAYLARI.get(o.get("gorev"), 0) <= 0 or not o.get("cevap"):
+                continue
+            anahtar = hashlib.md5((json.dumps(o["messages"], ensure_ascii=False) + o["cevap"]).encode()).hexdigest()
+            if anahtar in gorulen:
+                continue
+            gorulen.add(anahtar)
+            cikti.append(o)
+    return cikti
+
+
+def dengele(ornekler: list[dict], toplam: int | None = None, tohum: int = 3407) -> list[dict]:
+    """Görev paylarına göre dengeler: bir görev baskın olup diğer yordamları unutturmasın."""
+    import random
+    rnd = random.Random(tohum)
+    gruplar: dict[str, list[dict]] = {}
+    for o in ornekler:
+        gruplar.setdefault(o["gorev"], []).append(o)
+    toplam = toplam or len(ornekler)
+    secilen = []
+    for gorev, liste in gruplar.items():
+        rnd.shuffle(liste)
+        hedef = max(1, int(round(toplam * GOREV_PAYLARI.get(gorev, 0))))
+        secilen += liste[:hedef] if len(liste) > hedef else liste
+    rnd.shuffle(secilen)
+    return secilen
+
+
+def egitim_metinleri(ornekler: list[dict], sablon, uzunluk, en_cok_belirtec: int) -> tuple[list[dict], int]:
+    """İstem + cevap çiftleri. sablon(messages) → modelin çalışırken gördüğü istem metni (sohbet şablonu,
+    düşünme kapalı); uzunluk(metin) → belirteç sayısı. Sınırı aşanlar atılır. ([{prompt, completion}], atılan)"""
+    cikti, atilan = [], 0
+    for o in ornekler:
+        istem = sablon(o["messages"])
+        tamam = o["cevap"].strip()
+        if uzunluk(istem) + uzunluk(tamam) + 8 > en_cok_belirtec:
+            atilan += 1
+            continue
+        cikti.append({"prompt": istem, "completion": tamam, "gorev": o["gorev"]})
+    return cikti, atilan

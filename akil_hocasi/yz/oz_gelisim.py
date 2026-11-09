@@ -114,9 +114,39 @@ class GeceZekaCalismasi:
         return f"Ders adayı: {n}"
 
     # ------------------------------------------------------------------ 5 model yarışı
+    def ozel_model_sinavi(self, gelisim, bitis: float) -> list[str]:
+        """Kaggle'da eğitilmiş (katalog dışı) model bu bilgisayarın sınav setiyle temel modeline karşı sınanır:
+        eğitilmiş model seçiliyse temel aday olur (temel kapıdan geçerse geri dönülür); seçili değilse eğitilmiş
+        model aday olur. Sonuç model üst bilgisine yazılır; aynı model bir kez sınanır."""
+        yz = self.s.yz
+        kurulu = {m["kimlik"]: m for m in yz.kurulu()}
+        for m in yz.ozel_modeller():
+            if m.get("tur") != "sohbet" or m.get("yerel_sinav") or not m.get("temel"):
+                continue
+            if m["temel"] not in kurulu:
+                return [f"Eğitilmiş model ({m['ad']}): karşılaştırma için temel model ({m['temel']}) kurulu değil"]
+            if time.monotonic() > bitis:
+                return ["Eğitilmiş modelin yerel sınavı sonraki geceye kaldı"]
+            secili = yz.secili("sohbet")
+            if secili and secili["kimlik"] == m["kimlik"]:
+                temel_kazandi, gerekce = yz.yaris(gelisim, self.s.hat, m["temel"], bitis)
+                sonuc = "reddedildi" if temel_kazandi else "benimsendi"
+            else:
+                ok, gerekce = yz.yaris(gelisim, self.s.hat, m["kimlik"], bitis)
+                sonuc = "benimsendi" if ok else "reddedildi"
+            if gerekce.startswith("Yarış için"):
+                return [f"Eğitilmiş model: {gerekce}"]
+            yz.ust_bilgi_guncelle(m["kimlik"], yerel_sinav={"sonuc": sonuc, "gerekce": gerekce,
+                                                             "tarih": datetime.now().isoformat(timespec="seconds")})
+            return [f"Eğitilmiş model ({m['ad']}) bu bilgisayarın sınavında {sonuc} — {gerekce}"]
+        return []
+
     def model_gelisimi(self, gelisim, bitis: float, durdur=None) -> list[str]:
         yz = self.s.yz
         from .donanim import bellek_gb, prizde_mi
+        ozel = self.ozel_model_sinavi(gelisim, bitis)
+        if ozel:
+            return ozel
         mevcut = yz.secili("sohbet")
         adaylar = yz.katalog.yarisma_adaylari("sohbet", bellek_gb()[0], mevcut["kimlik"] if mevcut else None)
         if not adaylar:
