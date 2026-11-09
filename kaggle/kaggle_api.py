@@ -35,10 +35,49 @@ def kullanici() -> str:
         if not os.environ.get(ad, "").strip():
             os.environ.pop(ad, None)                  # boş gizli değer Kaggle aracını yanıltmasın
     k = os.environ.get("KAGGLE_USERNAME", "").strip()
+    if not k and os.environ.get("KAGGLE_API_TOKEN"):
+        k = _kullanici_bul()                          # yeni tür anahtar kullanıcı adını kendisi taşır
+        if k:
+            os.environ["KAGGLE_USERNAME"] = k
     if not k or not (os.environ.get("KAGGLE_API_TOKEN") or os.environ.get("KAGGLE_KEY")):
         sys.exit("Kaggle kimliği eksik. GitHub › Settings › Secrets and variables › Actions altına KAGGLE_USERNAME "
                  "ve KAGGLE_API_TOKEN (ya da eski tür anahtar için KAGGLE_KEY) ekleyin.")
     return k
+
+
+_BULUNAN: dict[str, str] = {}
+
+
+def _kullanici_bul() -> str:
+    """KAGGLE_USERNAME verilmemişse kullanıcı adını anahtardan bulur (Kaggle aracı 1.8+)."""
+    if "ad" in _BULUNAN:
+        return _BULUNAN["ad"]
+    ad = ""
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi
+        api = KaggleApi()
+        api.authenticate()
+        for kaynak in (lambda: api.get_config_value("username"), lambda: api.config_values.get("username"),
+                       lambda: getattr(api, "username", "")):
+            try:
+                ad = str(kaynak() or "").strip()
+            except Exception:  # noqa: BLE001
+                ad = ""
+            if ad:
+                break
+    except Exception as e:  # noqa: BLE001
+        print(f"(kullanıcı adı API'den alınamadı: {type(e).__name__})")
+    if not ad:
+        for komut in (["kaggle", "config", "view"], ["kaggle", "kernels", "list", "--mine", "--csv"]):
+            c = subprocess.run(komut, capture_output=True, text=True)
+            m = re.search(r"username:\s*(\S+)", c.stdout) or re.search(r"^([\w-]+)/[\w-]+,", c.stdout, re.M)
+            if m and m.group(1).lower() not in ("none", "ref"):
+                ad = m.group(1)
+                break
+    if ad:
+        print(f"Kaggle kullanıcı adı anahtardan bulundu: {ad}")
+    _BULUNAN["ad"] = ad
+    return ad
 
 
 def kaggle(*argumanlar: str, yakala: bool = False) -> str:
