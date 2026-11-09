@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -82,14 +83,45 @@ def llama_hazirla(gpu: bool = True) -> Path:
     secenek = f'-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="{cuda_mimarileri()}"' if gpu else "-DGGML_CUDA=OFF"
     if gpu and Path("/usr/local/cuda/bin/nvcc").is_file():
         secenek += " -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc"
-    sh(f"cmake -S {kaynak} -B {kaynak}/build {secenek} -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF "
-       f"-DLLAMA_BUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release")
+    if gpu:
+        surucu = cuda_surucu_kutuphanesi()
+        # Kaggle görüntüsünde araç takımı libcuda.so'yu kendisi bulamıyor (CUDA::cuda_driver yok): yolu veriyoruz;
+        # hiç bulunamazsa sürücüye doğrudan bağlanmayan (VMM'siz) derlemeye geçilir.
+        secenek += f" -DCUDA_cuda_driver_LIBRARY={surucu}" if surucu else " -DGGML_CUDA_NO_VMM=ON"
+    genel = "-DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release"
+    try:
+        sh(f"cmake -S {kaynak} -B {kaynak}/build {secenek} {genel}")
+    except subprocess.CalledProcessError:
+        if not gpu:
+            raise
+        bildir("CUDA yapılandırması başarısız; sürücüye doğrudan bağlanmayan derleme deneniyor")
+        shutil.rmtree(kaynak / "build", ignore_errors=True)
+        secenek = re.sub(r" -DCUDA_cuda_driver_LIBRARY=\S+", "", secenek)
+        sh(f"cmake -S {kaynak} -B {kaynak}/build {secenek} -DGGML_CUDA_NO_VMM=ON {genel}")
     sh(f"cmake --build {kaynak}/build --config Release -j {os.cpu_count() or 4} --target llama-server llama-quantize")
     hedef.mkdir(parents=True, exist_ok=True)
     for f in Path(kaynak, "build", "bin").iterdir():
         if f.is_file():
             shutil.copy2(f, hedef / f.name)
     return hedef
+
+
+def cuda_surucu_kutuphanesi() -> str:
+    """libcuda.so: önce araç takımındaki bağlama taslağı (stub), yoksa gerçek sürücü (gerekirse .so bağlantısıyla)."""
+    adaylar = (glob.glob("/usr/local/cuda*/**/stubs/libcuda.so", recursive=True)
+               + glob.glob("/usr/lib/x86_64-linux-gnu/libcuda.so*") + glob.glob("/usr/local/nvidia/lib64/libcuda.so*")
+               + glob.glob("/usr/lib64/libcuda.so*"))
+    for a in adaylar:
+        if not Path(a).exists():
+            continue
+        if a.endswith("libcuda.so"):
+            return a
+        baglanti = GECICI / "cuda_surucu" / "libcuda.so"      # libcuda.so.1 → libcuda.so (bağlayıcı bu adı arar)
+        baglanti.parent.mkdir(parents=True, exist_ok=True)
+        baglanti.unlink(missing_ok=True)
+        baglanti.symlink_to(Path(a).resolve())
+        return str(baglanti)
+    return ""
 
 
 def cuda_mimarileri() -> str:
