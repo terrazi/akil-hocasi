@@ -188,6 +188,18 @@ def durum(arg) -> None:
         for ad in ("manifest.json", "rapor.json", "EGITIM_RAPORU.md"):
             for f in hedef.rglob(ad):
                 print(f"===== {f} =====\n{f.read_text('utf-8', errors='replace')[:6000]}")
+        for f in hedef.rglob("atilan_ornekler.jsonl"):     # tanılama (Actions eki indirilemeyebilir: günlüğe)
+            print(f"===== {f.name} =====")
+            for satir in f.read_text("utf-8", errors="replace").splitlines()[:60]:
+                print(satir[:3500])
+        for f in sorted(hedef.rglob("sunucu_*.txt")):
+            print(f"===== {f.name} (son 80 satır) =====")
+            print("\n".join(f.read_text("utf-8", errors="replace").splitlines()[-80:]))
+        for f in hedef.rglob("ornekler.jsonl"):
+            satirlar = f.read_text("utf-8", errors="replace").splitlines()
+            print(f"===== {f.name}: {len(satirlar)} örnek; ilk üçü =====")
+            for satir in satirlar[:3]:
+                print(satir[:3000])
         for f in hedef.rglob("akilhocasi-*.json"):
             print(f"===== {f.name} =====\n{f.read_text('utf-8')[:4000]}")
     Path(os.environ.get("GITHUB_OUTPUT", os.devnull)).open("a").write(
