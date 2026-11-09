@@ -16,7 +16,7 @@ Bilgi üretmez: resmî kaynaktan alır, doğrular, kaynağıyla sunar. Kamu sist
 | Belge Deposu: orijinal Word/Excel/PDF, sürümler, makrosuz kopya, Korumalı Görünüm | Çalışır, test edildi |
 | Hızlı Yakala: bölge seçme, Print Screen + Ctrl+V, canlı metin, akıllı algılama | Kod tamam; derleme sunucusunda öz testle denenir |
 | Türkçe OCR: iyileştirme, çoklu okuma oylaması, Türkçe karakter önerileri | Çalışır (Tesseract `tur` ile test edildi) |
-| Tarayıcı gözlemcisi (Chrome/Edge eklentisi): pasif gözlem + arka planda site taraması → değerlendirme → kütüphane | Çalışır, test edildi (Python 28 + Node 17 test) |
+| Kaynak Havuzu: gömülü görünmez tarayıcı + kendiliğinden eşleşen Chrome/Edge eklentisi → değerlendirme → kütüphane | Çalışır, test edildi (gerçek Chrome/Edge ile uçtan uca; Node 21 test) |
 | Yerel dil modeli (llama.cpp) | İsteğe bağlı; yoksa alıntıya dayalı mod |
 | Yazı Hazırlama, Hesaplama, Ön Kontrol | Yer tutucu sayfa (Faz 3, 4, 5) |
 
@@ -41,7 +41,7 @@ sertifikası veya izin listesi konuşulmalıdır.
 
 **Ayarlar → Uygulamalar → Yüklü uygulamalar → Akıl Hocası → Kaldır** ya da Başlat menüsündeki
 **Akıl Hocası'nı kaldır** kısayolu. Program açıksa kapatılır; masaüstü kısayolu, Başlat menüsü kaydı ve
-Windows açılış kaydı silinir. Son adımda "Kişisel verileriniz de silinsin mi?" diye sorulur:
+Windows açılış kaydı ve tarayıcı eklentisinin köprü kaydı silinir. Son adımda "Kişisel verileriniz de silinsin mi?" diye sorulur:
 **Evet** derseniz kütüphane, belge deposu, ayarlar ve soru geçmişi de silinir; **Hayır** (varsayılan)
 derseniz korunur ve yeniden kurduğunuzda kaldığınız yerden devam edersiniz.
 Tarayıcıya eklediğiniz Akıl Hocası Gözlemci eklentisini `chrome://extensions` sayfasından ayrıca kaldırın.
@@ -109,36 +109,37 @@ nasıl daha iyi arayacağı, anlayacağı ve sunacağıdır. Her cevap yine madd
   ek katmanını eğitir. Her yeni model ya da katman *Aday modeli dene* kapısından geçer: altın sette eskisinden daha
   başarılı ve kritik hatası fazla değilse devreye girer, değilse eski model kalır.
 
-## Tarayıcı gözlemcisi (Akıl Hocası Gözlemci eklentisi)
+## Kaynak Havuzu: gömülü tarayıcı + tarayıcı eklentisi (entegre)
 
-Program, takvimli tarayıcısına ek olarak tarayıcıda gördüğünüz resmî sayfalardan da beslenir.
-Eklenti `gozlemci_eklenti/` klasöründedir; kurulumda pakete girer ve ilk açılışta
-`%LOCALAPPDATA%\AkilHocasi\gozlemci_eklenti` klasörüne kopyalanır.
+Program resmî sitelerden kendi kendine beslenir; hepsi soldaki **Kaynaklar** ekranından yönetilir.
 
-**Kurulum (bir kez):** Başlat menüsünde **Akıl Hocası Gözlemci (tarayıcı eklentisi) kur** → açılan
-klasörü Chrome'da `chrome://extensions` (Edge'de `edge://extensions`) → *Geliştirici modu* →
-*Paketlenmemiş öğe yükle* ile seçin → eklentinin Ayarlar sayfasına Akıl Hocası › Ayarlar ›
-*Tarayıcı gözlemcisi* bölümündeki **eşleştirme anahtarını** yapıştırın.
+- **Gömülü tarayıcı (eklenti gerekmez):** Program bilgisayardaki Edge'i (yoksa Chrome'u) görünmez çalıştırır.
+  Her tarama çerezsiz, oturumsuz, geçici bir profille yapılır; profil iş bitince silinir. Bu yüzden hiçbir kamu
+  sistemine oturum açık hâlde girilemez. Betikle yüklenen (JavaScript) sayfalar da okunur. Listedeki siteler haftada bir,
+  bilgisayar boştayken kendiliğinden taranır; "Tümünü şimdi tara" ile elle de başlatılır. Durdurulan tarama kaldığı
+  yerden sürer. Ek Python paketi gerekmez (Chrome DevTools Protokolü standart kütüphaneyle konuşulur).
+- **Tarayıcı eklentisi (isteğe bağlı):** Gezdiğiniz resmî sayfaları da havuza ekler. Kurulum, eklentinin
+  programla **kendiliğinden eşleşmesi** için Chrome/Edge'e yerel bir köprü (`AkilHocasiKopru.exe`, yalnız bu kullanıcı,
+  yönetici yetkisi gerekmez) kaydeder; anahtar kopyalanmaz. Eklentideki **Bu siteyi tara** işi programın görünmez
+  tarayıcısına devredilir; tarayıcınızı kapatsanız da sürer. Program kapalıysa eklenti onu tepside açtırır.
+- **Tek değerlendirme hattı:** Her iki yoldan gelen sayfa aynı denetimden geçer: kamu sistemi/oturum →
+  beyaz liste → maskeleme → sınıflandırma (mevzuat / form listesi / SSS / sayfa) → tekrar mı → kütüphaneye
+  **sürümlü** kayıt (değişen sayfa, ona dayanan kart ve soru-cevapları yeniden doğrulamaya düşürür) → resmî
+  PDF/Word/Excel bağlantıları **doğrudan resmî siteden** indirilip Belge Deposu'na işlenir. HTTP hata sayfaları
+  (404/500) kaydedilmez; yönlendirmeyle giriş sayfasına ya da başka alana düşen sayfa okunmaz. memurlar.net gibi
+  ikincil sitelerden içerik kopyalanmaz; yalnız başlık ve soru cümleleri ipucu olarak tutulur.
 
-**Nasıl çalışır?**
+**Eklentiyi ekleme (bir kez):** Başlat menüsü › **Akıl Hocası Gözlemci (tarayıcı eklentisi) kur** → açılan klasörü
+`chrome://extensions` (Edge: `edge://extensions`) › *Geliştirici modu* › *Paketlenmemiş öğe yükle* ile seçin. Eşleşme
+kendiliğinden olur. (Chrome, Web Mağazası dışındaki eklentileri Windows'ta sessizce kuramaz; bu tek adım
+tarayıcının güvenlik kuralıdır. Eklenti mağazada yayımlanırsa kurulum tek tıklamayla etkinleştirmeye iner.)
 
-- **Pasif gözlem:** Beyaz listedeki herkese açık resmî bir sayfayı açtığınızda ana metin, başlık ve dosya
-  bağlantıları okunur, maskelenir ve yalnızca bu bilgisayardaki programa (127.0.0.1) gönderilir.
-- **Site taraması:** Eklenti simgesi › *Bu siteyi tara*. Arka plan sekmesinde yalnız aynı alandaki bağlantılar
-  izlenir; hız profili (yavaş/normal/hızlı), sayfa ve derinlik sınırı, robots.txt, yapı benzerliği süzgeci
-  (aynı şablondaki sayfaların bağlantıları beş kez görüldükten sonra yeniden açılmaz), duraklat/devam/sıfırla.
-  Uygulama kapanırsa tarama kendiliğinden duraklar.
-- **Değerlendirme (programda):** kamu sistemi/oturum denetimi → beyaz liste → maskeleme → sınıflandırma
-  (mevzuat / form listesi / SSS / sayfa) → aynı içerik başka adreste var mı → kütüphaneye **sürümlü** kayıt
-  (değişen sayfa eski sürümü saklar, ona dayanan kart ve soru-cevapları yeniden doğrulamaya düşürür) →
-  resmî PDF/Word/Excel bağlantıları **doğrudan resmî siteden** indirilip Belge Deposu'na işlenir.
-  memurlar.net gibi ikincil sitelerden içerik kopyalanmaz; yalnız başlık ve soru cümleleri ipucu olarak tutulur.
-
-**Kesin sınırlar (eklentide ve programda ayrı ayrı uygulanır):** KBS, MYS, HYS, EBYS (enVision), HİTAP,
-e-Devlet, OBS, EKAP ve giriş/oturum sayfaları gözlenmez; parola alanı ya da çıkış bağlantısı görülen sayfa
-okunmaz; hiçbir düğmeye tıklanmaz, form gönderilmez. Eklenti yalnız `storage` ve `alarms` izinlerini ister;
-`<all_urls>`, `debugger`, `downloads`, `cookies` istemez. Sunucu yalnız 127.0.0.1'i dinler; eşleştirme anahtarı,
-eklenti kaynağı ve Host denetimi yapar.
+**Kesin sınırlar (eklentide, görünmez tarayıcıda ve programda ayrı ayrı uygulanır):** KBS, MYS, HYS, EBYS (enVision),
+HİTAP, e-Devlet, OBS, EKAP ve giriş/oturum sayfaları gözlenmez; parola alanı ya da çıkış bağlantısı görülen sayfa
+okunmaz; hiçbir düğmeye tıklanmaz, form gönderilmez; indirme ve tarayıcı uyarı pencereleri kapalıdır. Eklenti yalnız
+`storage`, `alarms` ve `nativeMessaging` izinlerini ister; `<all_urls>`, `debugger`, `downloads`, `cookies` istemez.
+Yerel sunucu yalnız 127.0.0.1'i dinler; eşleştirme anahtarı, eklenti kaynağı ve Host denetimi yapar; köprü yalnız
+Akıl Hocası Gözlemci'nin sabit kimliğine cevap verir.
 
 ## Kullanım
 
@@ -148,6 +149,8 @@ eklenti kaynağı ve Host denetimi yapar.
   sürükleyin, çift tık kelime, üçlü tık satır, `Ctrl+A` / `Ctrl+C`. TC ve IBAN varsayılan olarak
   maskeli kopyalanır. Print Screen'den sonra tepside "metni al?" bildirimi çıkar.
 - **Belge Deposu:** İndirilen formların orijinalleri; açtığınız her dosya bir kopyadır.
+- **Kaynaklar:** Taranan siteler, canlı tarama ilerlemesi, gözlem günlüğü (eklendi / güncel / atlandı ve nedeni),
+  ikincil site ipuçları ve eklentinin eşleşme durumu. Site eklemek için adresi yazıp *Ekle*.
 - **Neler Değişti:** Son 7 günün değişiklikleri ve takipteki sorular.
 
 ## Veri ve gizlilik
@@ -164,8 +167,8 @@ Tüm veri `%LOCALAPPDATA%\AkilHocasi` altındadır: `kutuphane.db`, `depo\`, `mo
 - [ ] `Win+Shift+Y` kısayolunun başka programla çakışıp çakışmadığı
 - [ ] Model hızı (16 GB ve 8 GB RAM'de), disk kullanımı
 - [ ] Altın soru seti (birimlerden gelecek 15–20 gerçek soru)
-- [ ] Gözlemci eklentisi: kurum Chrome/Edge politikasının paketlenmemiş eklentiye izin verip vermediği
-      (izin yoksa BT birimiyle zorunlu kurulum politikası); TOGÜ sitelerinde ana metin seçiminin doğruluğu
+- [ ] Kaynak Havuzu: varsayılan TOGÜ site listesinin doğrulanması, kurum Edge/Chrome politikasının görünmez
+      tarayıcıya ve paketlenmemiş eklentiye izin verip vermediği, TOGÜ sayfalarında ana metin seçiminin doğruluğu
 
 ## Geliştirici notları
 
@@ -177,7 +180,7 @@ akil_hocasi/
   crawler/   beyaz liste, indirici, kaynak adaptörleri, tarayıcı, zamanlayıcı, belge deposu
   ocr/       iyileştirme, motorlar, oylama, Türkçe düzeltme
   ogrenme/   öğrenme motoru, öğrenen sıralayıcı, gece öz değerlendirmesi, paylaşım paketleri, eğitim kapısı
-  gozlem/    tarayıcı gözlemi: değerlendirici (kabul/ipucu/ret), yerel sunucu (127.0.0.1), eklenti kurulumu
+  gozlem/    kaynak havuzu: değerlendirici, gömülü tarayıcı (CDP) ve tarama motoru, yerel sunucu, eklenti köprüsü
   ui/        PySide6 arayüz (tema, danışma, cevap kartı, Hızlı Yakala, sayfalar, ana pencere)
 gozlemci_eklenti/ Akıl Hocası Gözlemci (Chrome/Edge MV3): kurallar, içerik betiği, arka plan çalışanı, açılır pencere
 tests/       pytest (çekirdek, kütüphane, cevap, tarayıcı, OCR, öğrenme, gözlem); tests/js: Node eklenti testleri
@@ -188,7 +191,8 @@ egitim/     isteğe bağlı Kaggle ilk eğitim not defteri, altın soru seti şa
 ```
 
 Testler: `gelistirici\testleri_calistir.bat` veya `python -m pytest -q tests` ve
-`node --test tests/js/kurallar.test.js tests/js/arka_plan.test.js`.
+`node --test tests/js/kurallar.test.js tests/js/arka_plan.test.js`. Gömülü tarayıcı testleri bilgisayarda Chrome/Edge
+varsa sahte bir TOGÜ sitesine karşı uçtan uca çalışır (internet gerekmez).
 Doğrudan çalıştırma: `python -m akil_hocasi` (`--tepside` pencere açmadan başlar,
 `--oz-test=rapor.txt` ekransız öz test yapar, `--surum` sürümü yazar, `--gozlemci-kur` eklenti klasörünü
 açıp kurulumu anlatır).
