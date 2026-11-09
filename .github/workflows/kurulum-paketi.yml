@@ -1,11 +1,14 @@
 name: Kurulum paketi
 
 # main dalına her gönderimde ve "v0.1.0" gibi etiketlerde Windows kurulum dosyası üretir.
+# GitHub'da bir sürüm (Release) yayımlanınca kurulum dosyası o sürüme eklenir.
 # Actions sekmesinden elle de çalıştırılabilir.
 on:
   push:
     branches: [main]
     tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
