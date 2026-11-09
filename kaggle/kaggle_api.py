@@ -66,10 +66,11 @@ def _kullanici_bul() -> str:
             if ad:
                 break
     except Exception as e:  # noqa: BLE001
-        print(f"(kullanıcı adı API'den alınamadı: {type(e).__name__})")
+        print(f"(kullanıcı adı API'den alınamadı: {type(e).__name__}: {e})")
     if not ad:
         for komut in (["kaggle", "config", "view"], ["kaggle", "kernels", "list", "--mine", "--csv"]):
             c = subprocess.run(komut, capture_output=True, text=True)
+            print(f"$ {' '.join(komut)} → {c.returncode}\n{(c.stdout + c.stderr)[-800:]}")
             m = re.search(r"username:\s*(\S+)", c.stdout) or re.search(r"^([\w-]+)/[\w-]+,", c.stdout, re.M)
             if m and m.group(1).lower() not in ("none", "ref"):
                 ad = m.group(1)

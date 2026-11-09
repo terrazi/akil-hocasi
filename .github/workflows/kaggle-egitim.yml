@@ -45,7 +45,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Kaggle aracı
-        run: pip install -q --upgrade kaggle
+        run: |
+          pip install -q --upgrade kaggle
+          pip show kaggle kagglesdk 2>/dev/null | grep -E '^(Name|Version)' || true
       - name: Kaggle
         id: kaggle
         env:
