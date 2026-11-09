@@ -20,6 +20,11 @@ TEST_MODELLERI = ("qwen3.5-0.8b", "qwen3-embedding-0.6b")
 
 
 def main() -> int:
+    for akis in (sys.stdout, sys.stderr):              # Windows konsolu (cp1252) Türkçe karakterde hata vermesin
+        try:
+            akis.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     klasor = Path(sys.argv[1] if len(sys.argv) > 1 else "derleme/modeller")
     klasor.mkdir(parents=True, exist_ok=True)
     katalog, indirici = Katalog(), ModelIndirici(klasor)

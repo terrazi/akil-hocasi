@@ -59,6 +59,8 @@ def calistir(rapor_yolu: str) -> int:
     pencere = adim("Ana pencere", lambda: AnaPencere(s))
     if pencere is None:
         return _bitir(rapor_yolu, satirlar, hatalar)
+    pencere._zamanlayici_acik = False                 # arka plan güncellemesi öz testi etkilemesin
+    pencere.zaman.stop()
     pencere.show()
     app.processEvents()
     # Yerel modeller arka planda başlar; arayüz akışı modelsiz (belirlenimci) sınanır, model ayrıca uçtan uca sınanır
@@ -244,6 +246,45 @@ def calistir(rapor_yolu: str) -> int:
 
     adim("Zekâ sayfası", lambda: pencere.zeka.yenile() or f"{pencere.zeka.model_tablosu.rowCount()} model listelendi")
 
+    def resmi_yazi():
+        from .answer.llm import BosModel
+        from .yazi.cikti import docx_kaydet
+        sayfa = pencere.yazi
+        s.ayarlar.ayarla("yazi.profil", {"idare": "TOKAT GAZİOSMANPAŞA ÜNİVERSİTESİ", "birim": "Personel Daire Başkanlığı",
+                                         "imza_ad": "Öz", "imza_soyad": "Test", "imza_unvan": "Daire Başkanı"})
+        sayfa.metin_al("T.C.\nTOKAT GAZİOSMANPAŞA ÜNİVERSİTESİ\nStrateji Geliştirme Daire Başkanlığı\n\n"
+                       "Sayı : E-12345678-841-123456   05.11.2026\nKonu : Deneme hükmü uygulaması\n\n"
+                       "PERSONEL DAİRE BAŞKANLIĞINA\n\nDeneme hükmüne göre başvuru süresinin bildirilmesi "
+                       "gerekmektedir.\nBilgilerinizi rica ederim.\n")
+        sayfa.talimat.setPlainText("Başvurular TOGÜ.FRM.396 formu ile 15 gün içinde yapılmaktadır.")
+        if sayfa.gelen is None or sayfa.gelen.sayi != "E-12345678-841-123456":
+            raise RuntimeError("gelen yazı çözümlenemedi")
+        eski_model, s.hat.model = s.hat.model, BosModel()
+        try:
+            istek_sayfa = sayfa
+            istek_sayfa.hazirla()
+            istek_sayfa.calisan.wait(120_000)
+            app.processEvents()
+        finally:
+            s.hat.model = eski_model
+        sonuc = sayfa.sonuc
+        if sonuc is None:
+            raise RuntimeError("taslak oluşmadı: " + sayfa.durum.text())
+        y = sonuc.yazi
+        if y.muhatap != "Strateji Geliştirme Daire Başkanlığı" or y.paragraflar[-1].metin != "Bilgilerinizi arz ederim.":
+            raise RuntimeError(f"beklenmeyen taslak: {y.muhatap} / {y.paragraflar[-1].metin}")
+        for i in range(sayfa.sekmeler.count()):
+            sayfa.sekmeler.setCurrentIndex(i)
+            app.processEvents()
+        sayfa.metin_duzen.setPlainText(sayfa.metin_duzen.toPlainText() + "\n\nEk paragraf 3 personel.")
+        sayfa.yeniden_denetle()
+        yol = docx_kaydet(y, Path(tempfile.mkdtemp()) / "oz_test_taslak.docx")
+        if "STRATEJİ GELİŞTİRME DAİRE BAŞKANLIĞINA" not in sayfa.ebys.toPlainText():
+            raise RuntimeError("EBYS metni eksik")
+        return (f"{len(y.paragraflar)} paragraf, {sonuc.hata_sayisi} hata, kontrol listesi {len(sonuc.kontrol)} madde, "
+                f"Word {yol.stat().st_size // 1024} KB")
+    adim("Resmî yazı (gelen yazı → taslak → Word/EBYS)", resmi_yazi)
+
     def model_sunucusu():
         from .yz.sunucu import sunucu_exe
         exe = sunucu_exe(s.ayarlar.al("yz.sunucu_yolu", ""))
@@ -302,12 +343,8 @@ def calistir(rapor_yolu: str) -> int:
                 f"kısa cevap {olcum.get('sure_sn', '?')} sn; çalışma sorusu üretimi: {uretim}")
     adim("Yerel dil modeli (uçtan uca)", yerel_model)
 
-    if pencere._gozlem_sunucusu:
-        pencere._gozlem_sunucusu.durdur()
-    s.motor.kapat()
-    s.dosya_kuyrugu.durdur()
-    s.yz.durdur()
     pencere._cikiliyor = True
+    adim("Kapanış (arka plan iş parçacıkları)", lambda: pencere.calisanlari_durdur(30_000) or "durduruldu")
     pencere.kisayol.kaldir()
     pencere.tepsi.hide()
     return _bitir(rapor_yolu, satirlar, hatalar)

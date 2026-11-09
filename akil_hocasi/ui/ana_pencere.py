@@ -23,8 +23,9 @@ from .hizli_yakala import CanliMetinPenceresi, YakalamaKatmani
 from .ikonlar import ikon, logo_pixmap
 from .kisayol import GenelKisayol, bosta_kalma_sn
 from .sayfalar import (AyarlarSayfasi, BelgeDeposuSayfasi, KaynakHavuzuSayfasi, NelerDegistiSayfasi,
-                       YakindaSayfasi, YaziHazirlamaSayfasi, ZekaSayfasi)
+                       YakindaSayfasi, ZekaSayfasi)
 from .tema import R
+from .yazi_sayfasi import YaziHazirlamaSayfasi
 
 log = logging.getLogger("akilhocasi")
 
@@ -165,6 +166,7 @@ class AnaPencere(QMainWindow):
         self._havuz_yenileme.setSingleShot(True)
         self._havuz_yenileme.timeout.connect(self._havuzu_yenile)
         self._gozlem_sayac: dict[str, int] = {}
+        self._zamanlayici_acik = True                # öz test kapatır: arka plan görevleri başlamasın
 
         kok = QWidget()
         kok.setObjectName("Icerik")
@@ -268,7 +270,7 @@ class AnaPencere(QMainWindow):
         self.danisma.guncelle_istendi.connect(lambda: self.guncelle(["gece", "hafif", "derin"]))
         self.danisma.faydali.connect(self._faydali)
         self.danisma.kaynak_tiklandi.connect(self._kaynak_tiklandi)
-        self.yazi = YaziHazirlamaSayfasi()
+        self.yazi = YaziHazirlamaSayfasi(s)
         hesap = YakindaSayfasi("Hesaplama", "Tutarlar dil modeliyle değil, tarihli ve kaynaklı parametrelerle "
                                "kural tabanlı motorla hesaplanır; her satırın dayanağı gösterilir.", "Faz 4",
                                ["Kıst maaş ve maaş farkı", "Yurt içi / yurt dışı harcırah", "Ek ders ve fazla çalışma",
@@ -536,9 +538,11 @@ class AnaPencere(QMainWindow):
 
     # ================================================================== cevap eylemleri
     def yaziya_gonder(self, veri) -> None:
-        metin = veri.duz_metin() if isinstance(veri, Cevap) else str(veri)
         self.goster()
-        self.yazi.metin_al(metin)
+        if isinstance(veri, Cevap):
+            self.yazi.cevaptan(veri)                 # doğrulanmış cevap yazının dayanağı olur
+        else:
+            self.yazi.metin_al(str(veri))            # yakalanan/açılan metin gelen yazı kabul edilir
         self._sayfa("yazi")
 
     def belge_ac(self, ref) -> None:
@@ -579,6 +583,8 @@ class AnaPencere(QMainWindow):
 
     # ================================================================== güncelleme
     def _zamanlayici_tik(self) -> None:
+        if not self._zamanlayici_acik or self._cikiliyor:
+            return
         self._durumu_guncelle()
         if bosta_kalma_sn() > 120:
             self._anlam_dizinle()
@@ -831,8 +837,10 @@ class AnaPencere(QMainWindow):
             return
         self.cik()
 
-    def cik(self) -> None:
-        self._cikiliyor = True
+    def calisanlari_durdur(self, bekle_ms: int = 3000) -> None:
+        """Arka plan iş parçacıklarını durdurur ve bekler (çalışırken yok edilen QThread programı çökertir)."""
+        self._zamanlayici_acik = False
+        self.zaman.stop()
         if self._gozlem_sunucusu:
             self._gozlem_sunucusu.durdur()
         self.s.motor.kapat()
@@ -842,11 +850,17 @@ class AnaPencere(QMainWindow):
         for c in (self._indirme, self._anlam_calisani, self._zeka):
             if c and c.isRunning():
                 c.durdur.set()
+        yazi_calisani = getattr(self.yazi, "calisan", None)
+        danisma_calisani = getattr(self.danisma, "calisan", None)
         for t in (self._tarama, self._takip, self._ogrenme, self._aday, self._indirme, self._anlam_calisani, self._zeka,
-                  self._yz_baslatici):
+                  self._yz_baslatici, yazi_calisani, danisma_calisani):
             if t and t.isRunning():
-                t.wait(3000)
+                t.wait(bekle_ms)
         self.s.yz.durdur()
+
+    def cik(self) -> None:
+        self._cikiliyor = True
+        self.calisanlari_durdur()
         self.kisayol.kaldir()
         self.tepsi.hide()
         from PySide6.QtWidgets import QApplication

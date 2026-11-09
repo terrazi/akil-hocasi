@@ -1,4 +1,4 @@
-"""Diğer sayfalar: Belge Deposu, Neler Değişti, Ayarlar, Yazı Hazırlama ve yakında gelecek modüller."""
+"""Diğer sayfalar: Belge Deposu, Neler Değişti, Ayarlar, Kaynak Havuzu, Zekâ ve yakında gelecek modüller."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from pathlib import Path
 from PySide6.QtCore import QTime, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
-                               QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit,
-                               QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTimeEdit,
+                               QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton,
+                               QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTimeEdit,
                                QVBoxLayout, QWidget)
 
 from .bilesenler import Cip, SegmentSecici
@@ -333,28 +333,6 @@ class NelerDegistiSayfasi(QWidget):
 
 
 # ====================================================================== Yazı Hazırlama (Faz 3)
-
-class YaziHazirlamaSayfasi(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        yer = QVBoxLayout(self)
-        yer.setContentsMargins(32, 26, 32, 22)
-        yer.setSpacing(12)
-        _baslik(yer, "Yazı Hazırlama", "Gelen yazıya cevap veya yeni yazı taslağı: 2020 Resmî Yazışma Yönetmeliği "
-                                       "ve birim şablonu. Sayı, tarih ve imzayı enVision EBYS verir.")
-        yer.addWidget(Cip("Faz 3'te tamamlanacak", R["yazisma"]))
-        b = QLabel("GELEN METİN")
-        b.setObjectName("BolumBaslik")
-        yer.addWidget(b)
-        self.metin = QPlainTextEdit()
-        self.metin.setObjectName("Duz")
-        self.metin.setPlaceholderText("Hızlı Yakala'dan veya bir cevaptan gönderilen metin burada görünür. "
-                                      "Faz 3'te bu metinden birim adına TASLAK yazı hazırlanacak.")
-        yer.addWidget(self.metin, 1)
-
-    def metin_al(self, metin: str) -> None:
-        self.metin.setPlainText(metin)
-
 
 class YakindaSayfasi(QWidget):
     def __init__(self, baslik: str, aciklama: str, faz: str, maddeler: list[str], renk: str, parent=None):
