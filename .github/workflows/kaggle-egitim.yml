@@ -34,6 +34,9 @@ on:
       veri_seti:
         description: "İsteğe bağlı: programdan alınan eğitim paketinin Kaggle veri seti (kullanici/ad)"
         default: ""
+      ek:
+        description: "İsteğe bağlı ek ayarlar (ör. kısa deneme için: --soru 40 --tarama-dk 5)"
+        default: ""
 
 jobs:
   kaggle:
@@ -54,10 +57,11 @@ jobs:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          EK: ${{ inputs.ek }}
         run: >
           python kaggle/kaggle_api.py ${{ inputs.islem }} ${{ inputs.asama }}
           --tur ${{ inputs.tur }} --veri-turu ${{ inputs.veri_turu }} --sure-saat ${{ inputs.sure_saat }}
-          --ogrenci ${{ inputs.ogrenci }} ${{ inputs.veri_seti != '' && format('--veri-seti {0}', inputs.veri_seti) || '' }}
+          --ogrenci ${{ inputs.ogrenci }} ${{ inputs.veri_seti != '' && format('--veri-seti {0}', inputs.veri_seti) || '' }} $EK
       - name: Eğitilmiş modeli sakla
         if: inputs.islem == 'durum' && inputs.asama == 'egit' && steps.kaggle.outputs.durum == 'bitti'
         uses: actions/upload-artifact@v4
