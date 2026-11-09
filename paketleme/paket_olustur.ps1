@@ -62,7 +62,7 @@ if (-not (Test-Path (Join-Path $llama "llama-server.exe"))) {
     $yayinlar = Invoke-RestMethod "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=15" -Headers $basliklar
     $yayin = $null; $varlik = $null
     foreach ($y in $yayinlar) {
-        if ($y.prerelease -or $y.draft) { continue }
+        if ($y.draft) { continue }          # llama.cpp derleme sürümleri (bNNNN) ön sürüm olarak işaretlenebilir
         $adaylar = @($y.assets | Where-Object { $_.name -match "win" -and $_.name -match "x64" -and $_.name -match "\.zip$" -and
                                                 $_.name -notmatch "cuda|cudart|vulkan|hip|sycl|opencl|arm64|kompute|rpc|radeon" })
         $tercih = $adaylar | Where-Object { $_.name -match "cpu" } | Select-Object -First 1
