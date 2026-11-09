@@ -39,3 +39,13 @@ def test_bozuk_paket_reddedilir(kutuphane, tmp_path):
     s = paketi_yukle(t, _paket(tmp_path / "paket", YONETMELIK, sha="0" * 64))
     assert s["yeni"] == 0 and "bütünlük" in s["hata"][0]
     assert kutuphane.belge_bilgisi("MEV:21.5.2646") is None
+
+
+def test_mevzuat_metni_gecerliligi():
+    from akil_hocasi.crawler.kaynaklar import Mevzuat, mevzuat_metni_gecerli
+    kanun = "HARCIRAH KANUNU\nKanun Numarası : 6245\n" + "".join(f"Madde {i} – Hüküm metni. " * 20 + "\n" for i in range(1, 6))
+    assert mevzuat_metni_gecerli(kanun, "6245")
+    assert not mevzuat_metni_gecerli(kanun, "5434")                                  # başka kanunun metni
+    assert not mevzuat_metni_gecerli("Mevzuat Bilgi Sistemi " * 200, "6245")          # genel sayfa
+    adres = Mevzuat().kanun_adaylari("6245")
+    assert adres[0].endswith("1.5.6245.pdf") and any(a.endswith("1.3.6245.pdf") for a in adres)

@@ -18,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from akil_hocasi.crawler.depo import dosya_turu, metin_cikar  # noqa: E402
 from akil_hocasi.crawler.indirici import Indirici  # noqa: E402
-from akil_hocasi.crawler.kaynaklar import CEKIRDEK_KANUNLAR, CEKIRDEK_YONETMELIKLER, Mevzuat  # noqa: E402
+from akil_hocasi.crawler.kaynaklar import (CEKIRDEK_KANUNLAR, CEKIRDEK_YONETMELIKLER, Mevzuat,  # noqa: E402
+                                          mevzuat_metni_gecerli)
 
 BUTCE_SN = 480                    # derlemeyi uzatmamak için toplam süre sınırı
 
@@ -38,7 +39,7 @@ def main() -> int:
     belgeler = []
     bitis = time.monotonic() + BUTCE_SN
     ulasilamayan = 0
-    for _no, baslik, tur, kimlik, adresler in hedefler:
+    for no, baslik, tur, kimlik, adresler in hedefler:
         if time.monotonic() > bitis:
             print(f"UYARI: süre bütçesi ({BUTCE_SN // 60} dk) doldu; kalan belgeleri program ilk bağlantıda indirir")
             break
@@ -55,8 +56,9 @@ def main() -> int:
             dt = dosya_turu(s.icerik)
             if dt not in ("pdf", "doc", "docx", "html"):
                 continue
-            if len(metin_cikar(s.icerik, dt).strip()) < 500:
-                continue                                    # boş sayfa ya da hata sayfası
+            if not mevzuat_metni_gecerli(metin_cikar(s.icerik, dt), no):
+                print(f"  {url}: mevzuat metni değil (genel sayfa ya da hata sayfası), atlandı")
+                continue
             dosya = f"{kimlik.replace(':', '_')}.{dt}"
             (klasor / dosya).write_bytes(s.icerik)
             belgeler.append({"kimlik": kimlik, "baslik": baslik, "tur": tur, "url": url, "dosya": dosya,

@@ -22,16 +22,30 @@ def calistir(rapor_yolu: str) -> int:
     satirlar: list[str] = []
     hatalar: list[str] = []
 
+    def ara_rapor(simdiki: str = "") -> None:
+        """Rapor her adımda yazılır: öz test takılırsa derleme hattı nerede kaldığını gösterebilir."""
+        try:
+            Path(rapor_yolu).write_text("\n".join(satirlar + ([f"[SÜRÜYOR] {simdiki}"] if simdiki else [])),
+                                        encoding="utf-8")
+        except OSError:
+            pass
+
     def adim(ad: str, fn) -> object:
+        import time as _zaman
+        ara_rapor(ad)
+        bas = _zaman.monotonic()
         try:
             sonuc = fn()
             goster = sonuc if isinstance(sonuc, (str, int, float)) and sonuc != "" else ""
-            satirlar.append(f"[TAMAM] {ad}" + (f": {goster}" if goster != "" else ""))
+            sure = _zaman.monotonic() - bas
+            satirlar.append(f"[TAMAM] {ad}" + (f": {goster}" if goster != "" else "") + (f" ({sure:.0f} sn)" if sure >= 5 else ""))
             return sonuc
         except Exception:
             hatalar.append(ad)
             satirlar.append(f"[HATA]  {ad}\n{traceback.format_exc()}")
             return None
+        finally:
+            ara_rapor()
 
     from . import __version__
     satirlar.append(f"Akıl Hocası {__version__} öz testi — Python {platform.python_version()}, {platform.platform()}")

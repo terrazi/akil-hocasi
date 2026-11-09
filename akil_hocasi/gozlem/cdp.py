@@ -309,7 +309,10 @@ class BasliksizTarayici:
             if self.surec.poll() is not None:
                 raise TarayiciHatasi(f"Tarayıcı başlatılamadı (çıkış kodu {self.surec.returncode})")
             if dosya.is_file():
-                satirlar = dosya.read_text(encoding="utf-8").split()
+                try:
+                    satirlar = dosya.read_text(encoding="utf-8").split()
+                except OSError:                     # Windows: tarayıcı dosyayı o an yazıyor (paylaşım ihlali)
+                    satirlar = []
                 if len(satirlar) >= 2:
                     break
             time.sleep(0.1)

@@ -16,7 +16,8 @@ from ..library.db import Kutuphane
 from . import beyaz_liste
 from .depo import BelgeDeposu, dosya_turu, metin_cikar
 from .indirici import Indirici, IndirmeSonucu
-from .kaynaklar import CEKIRDEK_KANUNLAR, CEKIRDEK_YONETMELIKLER, Mevzuat, ResmiGazete, Togu
+from .kaynaklar import (CEKIRDEK_KANUNLAR, CEKIRDEK_YONETMELIKLER, Mevzuat, ResmiGazete, Togu,
+                        mevzuat_metni_gecerli)
 
 IlerlemeFn = Callable[[str], None]
 
@@ -205,6 +206,8 @@ class Tarayici:
                 if s.degismedi:
                     break
                 if s.basarili and dosya_turu(s.icerik) in ("pdf", "doc", "docx", "html"):
+                    if not mevzuat_metni_gecerli(metin_cikar(s.icerik, dosya_turu(s.icerik)), no):
+                        continue                    # genel sayfa ya da başka metin: sıradaki adres denenir
                     self.belge_isle(s, rapor, tur="kanun", kimlik=no, baslik=f"{no} sayılı {ad}",
                                     kaynak_turu="Mevzuat")
                     break
@@ -219,6 +222,8 @@ class Tarayici:
                 if s.degismedi:
                     break
                 if s.basarili and dosya_turu(s.icerik) in ("pdf", "doc", "docx", "html"):
+                    if not mevzuat_metni_gecerli(metin_cikar(s.icerik, dosya_turu(s.icerik)), no):
+                        continue
                     self.belge_isle(s, rapor, tur="yonetmelik", kimlik=f"MEV:{tur}.{tertip}.{no}", baslik=ad,
                                     kaynak_turu="Mevzuat")
                     break

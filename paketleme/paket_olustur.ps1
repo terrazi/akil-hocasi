@@ -116,6 +116,7 @@ Remove-Item $rapor -ErrorAction SilentlyContinue
 if (Get-ChildItem $modeller -Filter "*.gguf" -ErrorAction SilentlyContinue) { $env:AKILHOCASI_MODELLER = $modeller }
 $p = Start-Process -FilePath $exe -ArgumentList "--oz-test=`"$rapor`"" -PassThru
 if (-not $p.WaitForExit(1200000)) {
+    if (Test-Path $rapor) { Write-Host "--- yarım kalan öz test raporu ---"; Get-Content $rapor -Encoding UTF8 | Write-Host }
     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
     Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     throw "Paket öz testi 20 dakikada bitmedi (program bir hata penceresinde beklemiş olabilir)"

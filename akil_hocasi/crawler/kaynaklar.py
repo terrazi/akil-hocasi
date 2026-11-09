@@ -134,13 +134,24 @@ class Mevzuat:
             f"{self.TABAN}/mevzuat?MevzuatNo={no}&MevzuatTur={tur}&MevzuatTertip={tertip}",
         ]
 
-    def kanun_adaylari(self, no: str, tertip: int = 5) -> list[str]:
-        """Kanun metni için denenecek adresler (ilk başarılı olan kullanılır)."""
-        return [
-            f"{self.TABAN}/MevzuatMetin/1.{tertip}.{no}.pdf",
-            f"{self.TABAN}/MevzuatMetin/1.{tertip}.{no}.doc",
-            f"{self.TABAN}/mevzuat?MevzuatNo={no}&MevzuatTur=1&MevzuatTertip={tertip}",
-        ]
+    def kanun_adaylari(self, no: str, tertip: int | None = None) -> list[str]:
+        """Kanun metni için denenecek adresler (ilk geçerli olan kullanılır). Eski kanunlar (ör. 6245, 5434)
+        önceki tertiplerdedir; tertip verilmezse 5, 4 ve 3 denenir."""
+        tertipler = [tertip] if tertip else [5, 4, 3]
+        return ([f"{self.TABAN}/MevzuatMetin/1.{t}.{no}.pdf" for t in tertipler]
+                + [f"{self.TABAN}/MevzuatMetin/1.{t}.{no}.doc" for t in tertipler]
+                + [f"{self.TABAN}/mevzuat?MevzuatNo={no}&MevzuatTur=1&MevzuatTertip={t}" for t in tertipler])
+
+
+def mevzuat_metni_gecerli(metin: str, no: str) -> bool:
+    """İndirilen sayfa gerçekten o mevzuatın metni mi? (Genel sayfa ya da hata sayfası kütüphaneye girmesin.)
+    Mevzuat numarası geçmeli ve metin madde yapısında olmalıdır."""
+    if len(metin or "") < 1500:
+        return False
+    k = katla(metin)
+    if not re.search(rf"(?<!\d){re.escape(no)}(?!\d)", k):
+        return False
+    return len(re.findall(r"\bmadde\s+\d", k)) >= 3
 
 
 # --------------------------------------------------------------------- TOGÜ
