@@ -17,8 +17,14 @@ Bilgi üretmez: resmî kaynaktan alır, doğrular, kaynağıyla sunar. Kamu sist
 | Hızlı Yakala: bölge seçme, Print Screen + Ctrl+V, canlı metin, akıllı algılama | Kod tamam; derleme sunucusunda öz testle denenir |
 | Türkçe OCR: iyileştirme, çoklu okuma oylaması, Türkçe karakter önerileri | Çalışır (Tesseract `tur` ile test edildi) |
 | Kaynak Havuzu: gömülü görünmez tarayıcı + kendiliğinden eşleşen Chrome/Edge eklentisi → değerlendirme → kütüphane | Çalışır, test edildi (gerçek Chrome/Edge ile uçtan uca; Node 21 test) |
-| Yerel dil modeli (llama.cpp) | İsteğe bağlı; yoksa alıntıya dayalı mod |
-| Yazı Hazırlama, Hesaplama, Ön Kontrol | Yer tutucu sayfa (Faz 3, 4, 5) |
+| Çekirdek: 12 değişmez ilke, 25 yordamlık Yordam Kitabı, iş akışları, ilke karnesi, gelişim kapısı | Çalışır, test edildi |
+| Danışman muhakemesi: durum çözümlemesi, netleştirme, gerekçe (olgu → kural → sonuç), değerlendirme, öz eleştiri | Çalışır, test edildi |
+| Yerel dil modeli: llama.cpp `llama-server` pakette; bilgisayara göre Qwen3.5 önerisi, tek tıkla doğrulamalı indirme | Çalışır; derleme sunucusunda gerçek modelle öz test |
+| Anlam araması (Qwen3 Embedding) + kelime araması birleşik | Çalışır, test edildi |
+| Kendini geliştirme: çalışma soruları, hatalardan yöntem dersleri, yordam ayarı denemeleri, model yarışı | Çalışır, test edildi |
+| Resmî Yazı Hazırlama: gelen yazı çözümleme, 2020 Yönetmeliğine göre taslak, sınama, kontrol listesi, Word + EBYS metni | Çalışır, test edildi |
+| Çekirdek bilgi paketi: temel mevzuat kurulumla gelir (internet yokken ilk gün de kaynaklı cevap) | Derleme hattında resmî kaynaktan |
+| Hesaplama, Ön Kontrol | Yer tutucu sayfa (Faz 4, 5) |
 
 ## Kurulum (tek dosya, yönetici yetkisi gerekmez)
 
@@ -74,14 +80,44 @@ Program şu sırayla dener (Ayarlar'dan değiştirilebilir):
 3. **RapidOCR** — kurulum paketiyle gelir. Türkçe karakterler için PaddleOCR "latin" tanıma modeli
    önerilir (Faz 0'da doğruluk ölçülecek).
 
-## Yerel dil modeli (isteğe bağlı)
+## Yerel dil modeli ve çekirdek (Zekâ ekranı)
 
-Model olmadan program **alıntıya dayalı modda** çalışır: cevap cümleleri doğrudan madde metninden alınır.
-Kurulum paketi model çalıştırıcısını (llama.cpp) içerir; model dosyası boyutu nedeniyle (birkaç GB) ayrıdır.
-4–8 milyar parametreli, 4 bit (Q4_K_M) bir GGUF modelini `%LOCALAPPDATA%\AkilHocasi\modeller`
-klasörüne koyup Ayarlar > Yapay zekâ modeli bölümünden seçin. Hangi modelin Türkçe mevzuatta en iyi
-sonucu verdiği Faz 0'da altın soru setiyle ölçülecek. Model hangi cevabı yazarsa yazsın,
-kaynakta olmayan sayı, alıntı veya hüküm doğrulama motorunda elenir.
+Kurulum paketi model sunucusunu (llama.cpp `llama-server`, CPU) içerir. Model dosyaları büyük olduğu için ilk
+açılışta bilgisayarın belleğine uygun olanı önerilir ve tek tıkla indirilir (dosya bütünlüğü sha256 ile doğrulanır,
+kesilen indirme kaldığı yerden sürer). İnternet yoksa **Zekâ › Ortak model klasörü** ile ağdaki bir klasörden
+alınır. Model yokken program **alıntıya dayalı modda** çalışır.
+
+| Bellek | Önerilen dil modeli | Not |
+| --- | --- | --- |
+| 16 GB ve üstü | Qwen3.5 9B (Q4_K_M) | En iyi muhakeme; en yavaş |
+| 8–16 GB | Qwen3.5 4B | Dengeli |
+| 6–8 GB | Qwen3.5 2B | Hızlı |
+| Anlam araması | Qwen3 Embedding 0.6B | Her bilgisayarda |
+
+**Çekirdek** programın temel çalışma ilkeleridir (Zekâ › *Çekirdek El Kitabı*): doğruluk, güncellik, normlar
+hiyerarşisi, durumu anlama, gerekçeli muhakeme, dürüst güven düzeyi, çözüm odaklılık, somutluk, yetki sınırı,
+gizlilik, resmî dil ve kontrollü öğrenme. Her yordam (anlama, netleştirme, planlama, tarama, bulma, seçme, analiz,
+yordama, çatışma çözme, sentez, sınama, eleştirme, düzeltme, yeniden işleme, sunum, takip, test, ders çıkarma,
+strateji ayarı, benimseme, model gelişimi…) bu ilkelere bağlıdır. Öğrenme ilkeleri değiştiremez: yalnızca yordam
+ayarlarını izinli aralıkta, **ilke karnesinde** hiçbir ilkenin notunu düşürmeden ve gerçek iyileşme göstererek
+değiştirebilir (gelişim kapısı). Bilgisayar boştayken program kendi çalışma sorularını üretir, hatalarından yöntem
+dersleri çıkarır, ayar denemeleri yapar ve daha iyi bir model adayı varsa aynı sınavda yarıştırır.
+
+## Resmî Yazı Hazırlama
+
+Gelen yazıyı yapıştırın, Word/PDF olarak açın ya da ekran görüntüsünden okutun; program gönderen idareyi, sayıyı,
+tarihi, konuyu, istenen hususları ve cevap süresini çözümler. *Ne yazılsın?* alanına birimin cevabını yazın.
+Taslak, Resmî Yazışmalarda Uygulanacak Usul ve Esaslar Hakkında Yönetmeliğe (RG 10.06.2020/31151) göre hazırlanır:
+başlık, konu ve muhatap biçimi (yönelme hâli), ilgi sıralaması, 1,25 cm girinti, makama göre bitiş ifadesi
+(arz/rica ederim), imza, ek, dağıtım ve iletişim alanı.
+
+- **Sınama:** Metindeki her tarih, sayı, belge sayısı ve mevzuat atfı gelen yazıda, talimatta ya da doğrulanmış
+  mevzuatta bulunmalıdır; bulunmayan cümle çıkarılır ve *Nasıl düşündüm* sekmesinde gösterilir.
+- **Kontrol listesi:** Yönetmelik maddeleriyle (md. 10–26) ve çekirdek ilkeleriyle; bir maddeye çift tıklayınca
+  Yönetmeliğin o maddesi kütüphaneden açılır. Gelen yazıda istenen her hususun karşılanıp karşılanmadığı da denetlenir.
+- **Çıktılar:** Word taslağı (TASLAK ibareli), EBYS'ye alan alan yapıştırılacak metin. **Sayı, tarih, e-imza ve
+  doğrulama kodu üretilmez**; bunları EBYS verir. Başlık, imza ve iletişim bilgileri *Birim profili*nden gelir.
+- Danışma cevabındaki *Yazıya dönüştür* düğmesi, doğrulanmış cevabı yazının dayanağı yapar.
 
 ## Sürekli öğrenme ve kendini geliştirme
 

@@ -222,3 +222,16 @@ def test_yz_yoneticisi_secer_baslatir_ve_degistirir(kutuphane, tmp_path, sahte_e
     finally:
         yz.durdur()
     assert not yz.model.hazir
+
+
+def test_istekler_onbellek_dostu_siralanir():
+    from akil_hocasi.cekirdek.ilkeler import sistem_cekirdegi
+    from akil_hocasi.yz.sunucu import onbellek_dostu
+    m1 = onbellek_dostu([{"role": "system", "content": sistem_cekirdegi("Taslak yaz.")},
+                         {"role": "user", "content": "KAYNAKLAR: uzun blok"}])
+    m2 = onbellek_dostu([{"role": "system", "content": sistem_cekirdegi("Taslağı eleştir.")},
+                         {"role": "user", "content": "KAYNAKLAR: uzun blok"}])
+    assert m1[0] == m2[0] and "GÖREV" not in m1[0]["content"]            # sabit önek aynı
+    assert m1[1]["content"].startswith("KAYNAKLAR: uzun blok") and m1[1]["content"].endswith("GÖREV: Taslak yaz.")
+    sade = [{"role": "user", "content": "x"}]
+    assert onbellek_dostu(sade) is sade

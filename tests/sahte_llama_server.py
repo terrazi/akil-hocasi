@@ -39,7 +39,7 @@ def vektor(metin, boyut=64):
 
 
 def sohbet_cevabi(govde):
-    sistem = govde["messages"][0]["content"]
+    sistem = " ".join(m["content"] for m in govde["messages"])     # görev bölümü kullanıcı içeriğinin sonunda olabilir
     sema = (govde.get("response_format") or {}).get("json_schema", {}).get("schema", {})
     if "çözümle" in sistem:
         return json.dumps({"konu": "izin", "niyet": "bilgi", "personel_turu": "657/4-A memur", "olgular": ["memur"],

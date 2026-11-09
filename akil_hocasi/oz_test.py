@@ -222,6 +222,26 @@ def calistir(rapor_yolu: str) -> int:
 
     adim("Kaynak Havuzu sayfası", lambda: pencere.havuz.yenile() or "yenilendi")
 
+    def bilgi_paketi():
+        from .crawler.kaynaklar import RESMI_YAZISMA_KIMLIGI
+        from .library.bilgi_paketi import paket_klasoru, paketi_yukle
+        klasor = paket_klasoru()
+        if klasor is None:
+            return "pakette yok (derleme sırasında mevzuat.gov.tr'ye ulaşılamamış olabilir)"
+        if s.bilgi_paketi is not None:
+            s.bilgi_paketi.join(300)
+        sonuc = paketi_yukle(s.tarayici, klasor)
+        if sonuc["hata"]:
+            raise RuntimeError("; ".join(sonuc["hata"][:3]))
+        import json as _json
+        belgeler = _json.loads((klasor / "manifest.json").read_text("utf-8"))["belgeler"]
+        eksik = [b["kimlik"] for b in belgeler if not s.kutuphane.belge_bilgisi(b["kimlik"])]
+        if eksik:
+            raise RuntimeError(f"kütüphaneye işlenmeyen: {', '.join(eksik)}")
+        ryy = "var" if s.kutuphane.belge_bilgisi(RESMI_YAZISMA_KIMLIGI) else "yok"
+        return f"{len(belgeler)} belge kütüphanede (Resmî Yazışma Yönetmeliği: {ryy})"
+    adim("Çekirdek bilgi paketi", bilgi_paketi)
+
     def cekirdek():
         import threading
 

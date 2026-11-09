@@ -325,6 +325,8 @@ class YaziHazirlamaSayfasi(QWidget):
         self.kontrol_tablosu.verticalHeader().setVisible(False)
         self.kontrol_tablosu.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.kontrol_tablosu.setWordWrap(True)
+        self.kontrol_tablosu.setToolTip("Bir maddeye çift tıklayın: Yönetmeliğin o maddesinin metni gösterilir")
+        self.kontrol_tablosu.cellDoubleClicked.connect(self._madde_goster)
         self.sekmeler.addTab(self.kontrol_tablosu, "Kontrol listesi")
         self.dusunce = QTextBrowser()
         self.dusunce.setOpenExternalLinks(True)
@@ -553,6 +555,38 @@ class YaziHazirlamaSayfasi(QWidget):
                                                     "olarak kabul edildi; içindeki bilgiler sizin sorumluluğunuzdadır"))
         self._goster()
         self.sekmeler.setCurrentIndex(3)
+
+    def _madde_goster(self, satir: int, _sutun: int = 0) -> None:
+        """Kontrol listesindeki dayanağın (md. N) Yönetmelik metnini kütüphaneden gösterir."""
+        import re
+
+        from ..crawler.kaynaklar import RESMI_YAZISMA_KIMLIGI
+        oge = self.kontrol_tablosu.item(satir, 1)
+        m = re.search(r"md\.\s*(\d+)", oge.text() if oge else "")
+        if not m:
+            return
+        madde = self.s.kutuphane.madde_getir(RESMI_YAZISMA_KIMLIGI, m.group(1))
+        if madde is None:
+            QMessageBox.information(self, "Resmî Yazışma Yönetmeliği",
+                                    f"Yönetmeliğin {m.group(1)}. maddesi kütüphanede henüz yok. Program mevzuatı "
+                                    "güncellediğinde (ya da çekirdek bilgi paketiyle) burada görüntülenir.")
+            return
+        d = QDialog(self)
+        d.setWindowTitle(f"Resmî Yazışma Yönetmeliği — Madde {m.group(1)}")
+        d.resize(640, 480)
+        v = QVBoxLayout(d)
+        tb = QTextBrowser()
+        tb.setOpenExternalLinks(True)
+        kaynak = (f"<p style='color:#7A7F99;'>Kaynak: <a href='{html.escape(madde.kaynak_url)}'>"
+                  f"{html.escape(madde.belge_baslik)}</a></p>") if madde.kaynak_url else ""
+        tb.setHtml(f"<h3>Madde {html.escape(madde.madde_no)}"
+                   + (f" — {html.escape(madde.baslik)}" if madde.baslik else "") + "</h3>"
+                   + "<p>" + html.escape(madde.metin).replace("\n", "<br>") + "</p>" + kaynak)
+        v.addWidget(tb)
+        b = QDialogButtonBox(QDialogButtonBox.Close)
+        b.rejected.connect(d.reject)
+        v.addWidget(b)
+        d.exec()
 
     def word_kaydet(self) -> None:
         if self.sonuc is None:

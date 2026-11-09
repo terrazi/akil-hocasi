@@ -44,6 +44,11 @@ llama = os.path.join(KOK, "derleme", "llama")
 if os.path.isdir(llama):
     datas.append((llama, "llama"))
 
+# Çekirdek bilgi paketi: temel mevzuatın resmî kaynaktan indirilmiş özgün dosyaları (ilk açılışta işlenir)
+bilgi_paketi = os.path.join(KOK, "derleme", "bilgi_paketi")
+if os.path.isfile(os.path.join(bilgi_paketi, "manifest.json")):
+    datas.append((bilgi_paketi, "bilgi_paketi"))
+
 # Akıl Hocası Gözlemci tarayıcı eklentisi (Chrome/Edge, MV3); ilk açılışta veri klasörüne kopyalanır
 datas.append((os.path.join(KOK, "gozlemci_eklenti"), "gozlemci_eklenti"))
 

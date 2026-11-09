@@ -116,8 +116,23 @@ CEKIRDEK_KANUNLAR: list[tuple[str, str]] = [
 ]
 
 
+# (MevzuatNo, ad, MevzuatTur, MevzuatTertip): kanun dışındaki çekirdek mevzuat (21 = Cumhurbaşkanlığı yönetmeliği)
+CEKIRDEK_YONETMELIKLER: list[tuple[str, str, int, int]] = [
+    ("2646", "Resmî Yazışmalarda Uygulanacak Usul ve Esaslar Hakkında Yönetmelik", 21, 5),
+]
+RESMI_YAZISMA_KIMLIGI = "MEV:21.5.2646"
+
+
 class Mevzuat:
     TABAN = "https://www.mevzuat.gov.tr"
+
+    def metin_adaylari(self, no: str, tur: int, tertip: int = 5) -> list[str]:
+        """Kanun dışı mevzuat (yönetmelik vb.) metni için denenecek adresler."""
+        return [
+            f"{self.TABAN}/MevzuatMetin/{tur}.{tertip}.{no}.pdf",
+            f"{self.TABAN}/MevzuatMetin/{tur}.{tertip}.{no}.doc",
+            f"{self.TABAN}/mevzuat?MevzuatNo={no}&MevzuatTur={tur}&MevzuatTertip={tertip}",
+        ]
 
     def kanun_adaylari(self, no: str, tertip: int = 5) -> list[str]:
         """Kanun metni için denenecek adresler (ilk başarılı olan kullanılır)."""

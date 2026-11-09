@@ -49,6 +49,7 @@ class Servisler:
     yz: object
     strateji: object
     dersler: object
+    bilgi_paketi: object = None                  # çekirdek bilgi paketini işleyen arka plan iş parçacığı
 
 
 _cevrimici_onbellek = {"zaman": 0.0, "durum": True}
@@ -139,9 +140,16 @@ def servisleri_kur() -> Servisler:
             log.info("Eklenti köprüsü kayıtlı: %s", ", ".join(kayitli))
     except OSError as e:
         log.warning("Eklenti köprüsü kaydedilemedi: %s", e)
+    # Çekirdek bilgi paketi (kurulumla gelen temel mevzuat): kütüphanede olmayanlar arka planda işlenir
+    paket_is = None
+    from .library.bilgi_paketi import paket_klasoru, paketi_yukle
+    if tarayici is not None and paket_klasoru() is not None:
+        import threading
+        paket_is = threading.Thread(target=paketi_yukle, args=(tarayici,), name="bilgi_paketi", daemon=True)
+        paket_is.start()
     return Servisler(yollar, ayarlar, kutuphane, depo, tarayici, hat, ocr,
                      Zamanlayici(ayarlar.al("guncelleme", {}), kimlik), kimlik, ogrenme, siralayici,
-                     gozlem, dosya_kuyrugu, motor, yz, strateji, dersler)
+                     gozlem, dosya_kuyrugu, motor, yz, strateji, dersler, paket_is)
 
 
 _MUTEX = None

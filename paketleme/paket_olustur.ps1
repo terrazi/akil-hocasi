@@ -96,6 +96,8 @@ Get-Content (Join-Path $llama "SURUM.txt") -ErrorAction SilentlyContinue | Write
 & (Join-Path $llama "llama-server.exe") --version 2>&1 | Select-Object -First 3 | Write-Host
 $modeller = Join-Path $Derleme "modeller"
 & $vpy paketleme\test_modelleri.py $modeller
+# Çekirdek bilgi paketi: temel mevzuat resmî kaynaktan (indirilemeyen atlanır; program sonra kendisi indirir)
+& $vpy paketleme\bilgi_paketi.py (Join-Path $Derleme "bilgi_paketi")
 
 Adim "4/7 PyInstaller (Python gömülü uygulama klasörü)"
 Remove-Item (Join-Path $Derleme "dist"), (Join-Path $Derleme "work"), (Join-Path $Derleme "kopru"), (Join-Path $Derleme "work_kopru") -Recurse -Force -ErrorAction SilentlyContinue

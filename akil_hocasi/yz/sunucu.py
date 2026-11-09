@@ -247,6 +247,25 @@ class LlamaSunucusu:
         return np.vstack(cikti) if cikti else np.zeros((0, 0), dtype=np.float32)
 
 
+def onbellek_dostu(mesajlar: list[dict]) -> list[dict]:
+    """İsteği sunucunun önek önbelleğine uygun sıraya koyar.
+
+    Çekirdek talimatı (sabit) başta kalır; değişen GÖREV bölümü kullanıcı içeriğinin (kaynaklar, durum) SONUNA
+    taşınır. Böylece aynı sorunun sentez, öz eleştiri ve düzeltme çağrıları uzun kaynak bloğunu yeniden işlemez:
+    llama-server ortak öneki önbellekten kullanır (CPU'da en pahalı adım bu bloğun işlenmesidir)."""
+    if len(mesajlar) < 2 or mesajlar[0].get("role") != "system" or "\n\nGÖREV: " not in mesajlar[0]["content"]:
+        return mesajlar
+    on, gorev = mesajlar[0]["content"].split("\n\nGÖREV: ", 1)
+    yeni = [{"role": "system", "content": on}] + [dict(m) for m in mesajlar[1:]]
+    for m in reversed(yeni):
+        if m.get("role") == "user":
+            m["content"] = f"{m['content']}\n\nGÖREV: {gorev}"
+            break
+    else:
+        return mesajlar
+    return yeni
+
+
 class SunucuModeli:
     """Cevap hattının kullandığı dil modeli arayüzü (DilModeli) — llama-server üzerinden."""
 
@@ -259,6 +278,7 @@ class SunucuModeli:
 
     def sohbet(self, mesajlar, max_tokens=900, sicaklik=0.2, json_mod=False, json_sema=None, dusunme=False,
                akis=None) -> str:
+        mesajlar = onbellek_dostu(mesajlar)
         return self.sunucu.sohbet(mesajlar, max_tokens=max_tokens, sicaklik=sicaklik, json_sema=json_sema,
                                   json_mod=json_mod, dusunme=dusunme and self.dusunme_destegi, akis=akis)
 
