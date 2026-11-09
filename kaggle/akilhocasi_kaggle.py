@@ -79,7 +79,7 @@ def llama_hazirla(gpu: bool = True) -> Path:
     kaynak = GECICI / "llama.cpp"
     if not kaynak.is_dir():
         sh(f"git clone --depth 1 https://github.com/ggml-org/llama.cpp {kaynak}")
-    secenek = '-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="60;75"' if gpu else "-DGGML_CUDA=OFF"
+    secenek = f'-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="{cuda_mimarileri()}"' if gpu else "-DGGML_CUDA=OFF"
     if gpu and Path("/usr/local/cuda/bin/nvcc").is_file():
         secenek += " -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc"
     sh(f"cmake -S {kaynak} -B {kaynak}/build {secenek} -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF "
@@ -90,6 +90,17 @@ def llama_hazirla(gpu: bool = True) -> Path:
         if f.is_file():
             shutil.copy2(f, hedef / f.name)
     return hedef
+
+
+def cuda_mimarileri() -> str:
+    """Takılı kartların hesaplama yetenekleri (T4: 75, P100: 60); yalnız onlar için derlemek süreyi kısaltır."""
+    try:
+        c = subprocess.run(["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"], capture_output=True,
+                           text=True, timeout=30)
+        bulunan = {x.strip().replace(".", "") for x in c.stdout.splitlines() if x.strip()}
+    except (OSError, subprocess.SubprocessError):
+        bulunan = set()
+    return ";".join(sorted(bulunan or {"60", "75"}))
 
 
 def llama_arsivle(klasor: Path, hedef: Path) -> None:
