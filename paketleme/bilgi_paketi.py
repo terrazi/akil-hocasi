@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from akil_hocasi.crawler.depo import dosya_turu, metin_cikar  # noqa: E402
 from akil_hocasi.crawler.indirici import Indirici  # noqa: E402
 from akil_hocasi.crawler.kaynaklar import CEKIRDEK_KANUNLAR, CEKIRDEK_YONETMELIKLER, Mevzuat  # noqa: E402
+
+BUTCE_SN = 480                    # derlemeyi uzatmamak için toplam süre sınırı
 
 
 def main() -> int:
@@ -33,10 +36,21 @@ def main() -> int:
     hedefler += [(no, ad, "yonetmelik", f"MEV:{tur}.{tertip}.{no}", mev.metin_adaylari(no, tur, tertip))
                  for no, ad, tur, tertip in CEKIRDEK_YONETMELIKLER]
     belgeler = []
+    bitis = time.monotonic() + BUTCE_SN
+    ulasilamayan = 0
     for _no, baslik, tur, kimlik, adresler in hedefler:
+        if time.monotonic() > bitis:
+            print(f"UYARI: süre bütçesi ({BUTCE_SN // 60} dk) doldu; kalan belgeleri program ilk bağlantıda indirir")
+            break
+        if ulasilamayan >= 3 and not belgeler:
+            print("UYARI: mevzuat.gov.tr bu sunucudan ulaşılamıyor; paket boş kalır, program ilk bağlantıda indirir")
+            break
         for url in adresler:
             s = ind.getir(url)
             if not s.basarili:
+                if s.durum == 0:
+                    ulasilamayan += 1
+                    print(f"  {url}: {s.hata[:120]}")
                 continue
             dt = dosya_turu(s.icerik)
             if dt not in ("pdf", "doc", "docx", "html"):
