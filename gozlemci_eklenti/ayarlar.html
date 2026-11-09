@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <title>Akıl Hocası Gözlemci — Ayarlar</title>
+  <link rel="stylesheet" href="stil.css">
+  <style>main { max-width: 620px; margin: 0 auto; } .ust { justify-content: center; }</style>
+</head>
+<body>
+  <div class="ust">
+    <img src="simgeler/simge48.png" alt="">
+    <div><b>Akıl Hocası Gözlemci — Ayarlar</b><small>Bu bilgisayardaki Akıl Hocası uygulamasıyla eşleştirme</small></div>
+  </div>
+  <main>
+    <section class="kart">
+      <h2>Eşleştirme</h2>
+      <p class="bilgi">Akıl Hocası'nı açın: <b>Ayarlar → Tarayıcı gözlemcisi</b> bölümündeki <b>eşleştirme anahtarını</b> kopyalayıp aşağıya yapıştırın. Veriler yalnızca bu bilgisayardaki uygulamaya gider; internete gönderilmez.</p>
+      <div class="alan"><label for="anahtar">Eşleştirme anahtarı</label><input id="anahtar" type="password" autocomplete="off" spellcheck="false" placeholder="Uygulamadan kopyalayın"></div>
+      <div class="alan"><label for="port">Yerel bağlantı noktası</label><input id="port" type="number" min="1024" max="65535"></div>
+      <div class="dugmeler"><button id="kaydet">Kaydet ve bağlantıyı sına</button></div>
+      <p class="soluk" id="sonuc"></p>
+    </section>
+
+    <section class="kart">
+      <h2>Site taraması</h2>
+      <div class="alan"><label for="hiz">Hız</label>
+        <select id="hiz">
+          <option value="yavas">Yavaş — sayfa başına ~6 sn (siteyi en az yorar)</option>
+          <option value="normal">Normal — sayfa başına ~3 sn</option>
+          <option value="hizli">Hızlı — sayfa başına ~1,5 sn</option>
+        </select>
+      </div>
+      <div class="alan"><label for="enCokSayfa">Bir taramada en çok sayfa</label><input id="enCokSayfa" type="number" min="1" max="5000"></div>
+      <div class="alan"><label for="enCokDerinlik">Bağlantı derinliği</label><input id="enCokDerinlik" type="number" min="0" max="10"></div>
+      <div class="dugmeler"><button id="kaydet2">Kaydet</button></div>
+    </section>
+
+    <section class="kart">
+      <h2>Gözlemci ne yapar, ne yapmaz?</h2>
+      <ul class="kurallar">
+        <li>Yalnız beyaz listedeki herkese açık resmî siteleri (Resmî Gazete, mevzuat.gov.tr, TOGÜ, YÖK, HMB, SGK, Sayıştay, Danıştay, KİK, KVKK…) okur.</li>
+        <li>KBS, MYS, HYS, EBYS (enVision), HİTAP, e-Devlet, OBS ve giriş gerektiren hiçbir sayfayı gözlemez; parola alanı veya çıkış bağlantısı olan sayfayı okumaz.</li>
+        <li>Hiçbir düğmeye tıklamaz, form göndermez; yalnız sayfa metnini ve dosya bağlantılarını okur.</li>
+        <li>TC kimlik no, IBAN, kart numarası ve cep telefonunu göndermeden önce maskeler.</li>
+        <li>memurlar.net gibi ikincil sitelerden içerik kopyalamaz; yalnız başlık ve soru ipucu alır.</li>
+        <li>Akıl Hocası gelen her sayfayı ayrıca denetler, sürümler ve kaynağıyla birlikte saklar.</li>
+      </ul>
+    </section>
+  </main>
+  <script src="ayarlar.js"></script>
+</body>
+</html>

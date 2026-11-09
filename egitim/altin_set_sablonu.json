@@ -1,0 +1,9 @@
+[
+  {
+    "soru": "[Personelin gerçek sorusu, olduğu gibi]",
+    "beklenen_dayanak": ["[kanun no]/[madde no]", "TOGÜ.[kod]/[madde no]"],
+    "beklenen_ifade": "[doğru cevapta mutlaka geçmesi gereken kısa ifade; yoksa boş bırakın]",
+    "birim": "[soruyu onaylayan birim]",
+    "onaylayan": "[uzmanın adı]"
+  }
+]

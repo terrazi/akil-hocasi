@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "Akıl Hocası Gözlemci",
+  "short_name": "Akıl Hocası",
+  "version": "0.1.0",
+  "description": "Gezdiğiniz herkese açık resmî mevzuat ve TOGÜ sayfalarını yerel Akıl Hocası kütüphanesine kaynak olarak ekler. Kamu sistemlerine ve giriş gerektiren sayfalara girmez.",
+  "minimum_chrome_version": "110",
+  "icons": { "16": "simgeler/simge16.png", "32": "simgeler/simge32.png", "48": "simgeler/simge48.png", "128": "simgeler/simge128.png" },
+  "action": {
+    "default_title": "Akıl Hocası Gözlemci",
+    "default_popup": "acilir.html",
+    "default_icon": { "16": "simgeler/simge16.png", "32": "simgeler/simge32.png" }
+  },
+  "options_page": "ayarlar.html",
+  "background": { "service_worker": "arka_plan.js" },
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://resmigazete.gov.tr/*", "https://*.resmigazete.gov.tr/*",
+    "https://mevzuat.gov.tr/*", "https://*.mevzuat.gov.tr/*",
+    "https://gop.edu.tr/*", "https://*.gop.edu.tr/*", "http://gop.edu.tr/*", "http://*.gop.edu.tr/*",
+    "https://yok.gov.tr/*", "https://*.yok.gov.tr/*",
+    "https://hmb.gov.tr/*", "https://*.hmb.gov.tr/*",
+    "https://sgk.gov.tr/*", "https://*.sgk.gov.tr/*",
+    "https://sayistay.gov.tr/*", "https://*.sayistay.gov.tr/*",
+    "https://danistay.gov.tr/*", "https://*.danistay.gov.tr/*",
+    "https://kik.gov.tr/*", "https://*.kik.gov.tr/*",
+    "https://kaysis.gov.tr/*", "https://*.kaysis.gov.tr/*",
+    "https://kvkk.gov.tr/*", "https://*.kvkk.gov.tr/*",
+    "https://csgb.gov.tr/*", "https://*.csgb.gov.tr/*",
+    "https://tccb.gov.tr/*", "https://*.tccb.gov.tr/*",
+    "https://memurlar.net/*", "https://*.memurlar.net/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://resmigazete.gov.tr/*", "https://*.resmigazete.gov.tr/*",
+        "https://mevzuat.gov.tr/*", "https://*.mevzuat.gov.tr/*",
+        "https://gop.edu.tr/*", "https://*.gop.edu.tr/*", "http://gop.edu.tr/*", "http://*.gop.edu.tr/*",
+        "https://yok.gov.tr/*", "https://*.yok.gov.tr/*",
+        "https://hmb.gov.tr/*", "https://*.hmb.gov.tr/*",
+        "https://sgk.gov.tr/*", "https://*.sgk.gov.tr/*",
+        "https://sayistay.gov.tr/*", "https://*.sayistay.gov.tr/*",
+        "https://danistay.gov.tr/*", "https://*.danistay.gov.tr/*",
+        "https://kik.gov.tr/*", "https://*.kik.gov.tr/*",
+        "https://kaysis.gov.tr/*", "https://*.kaysis.gov.tr/*",
+        "https://kvkk.gov.tr/*", "https://*.kvkk.gov.tr/*",
+        "https://csgb.gov.tr/*", "https://*.csgb.gov.tr/*",
+        "https://tccb.gov.tr/*", "https://*.tccb.gov.tr/*",
+        "https://memurlar.net/*", "https://*.memurlar.net/*"
+      ],
+      "exclude_matches": [
+        "*://ebys.gop.edu.tr/*", "*://obs.gop.edu.tr/*", "*://pbs.gop.edu.tr/*", "*://portal.gop.edu.tr/*",
+        "*://mail.gop.edu.tr/*", "*://webmail.gop.edu.tr/*", "*://sso.gop.edu.tr/*", "*://cas.gop.edu.tr/*",
+        "*://hys.gop.edu.tr/*", "*://mys.gop.edu.tr/*", "*://ekap.kik.gov.tr/*", "*://hitap.sgk.gov.tr/*"
+      ],
+      "js": ["kurallar.js", "icerik.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'" }
+}

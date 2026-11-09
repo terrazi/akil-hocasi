@@ -1,0 +1,13 @@
+# İsteğe bağlı: OCR motorları (en az biri önerilir)
+# Windows yerleşik OCR (Türkçe dil paketi yüklü olmalı)
+winrt-runtime; sys_platform == "win32"
+winrt-Windows.Foundation; sys_platform == "win32"
+winrt-Windows.Foundation.Collections; sys_platform == "win32"
+winrt-Windows.Media.Ocr; sys_platform == "win32"
+winrt-Windows.Globalization; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging; sys_platform == "win32"
+winrt-Windows.Storage.Streams; sys_platform == "win32"
+# Programla gelen yedek OCR (yönetici yetkisi gerekmez)
+rapidocr-onnxruntime
+# Tesseract kullanılacaksa (tesseract.exe ayrıca kurulmalı)
+pytesseract

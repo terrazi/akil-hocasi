@@ -1,0 +1,48 @@
+name: Kurulum paketi
+
+# main dalına her gönderimde ve "v0.1.0" gibi etiketlerde Windows kurulum dosyası üretir.
+# Actions sekmesinden elle de çalıştırılabilir.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Kurulum paketini oluştur (test → PyInstaller → öz test → Inno Setup)
+        shell: pwsh
+        run: ./paketleme/paket_olustur.ps1
+
+      - name: Öz test raporu
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oz-test-raporu
+          path: derleme/oz_test_raporu.txt
+          if-no-files-found: ignore
+
+      - name: Kurulum dosyası
+        uses: actions/upload-artifact@v4
+        with:
+          name: AkilHocasi-Kurulum
+          path: derleme/cikti/*.exe
+          retention-days: 30
+
+      - name: Sürüm yayımla
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: derleme/cikti/*.exe

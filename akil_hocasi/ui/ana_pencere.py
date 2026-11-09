@@ -1,0 +1,687 @@
+"""Ana pencere: sol menü şeridi + sayfalar + canlı durum çubuğu + sistem tepsisi + zamanlayıcı."""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime
+from pathlib import Path
+
+from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QIcon, QImage
+from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
+                               QPlainTextEdit, QPushButton, QStackedWidget, QSystemTrayIcon, QToolButton,
+                               QVBoxLayout, QWidget)
+
+from .. import UYGULAMA_ADI
+from ..answer.modeller import Cevap, Durum
+from ..crawler.zamanlayici import GOREVLER
+from .calisanlar import AdayModelCalisani, ModelYukleyici, OgrenmeCalisani, TaramaCalisani
+from .danisma import DanismaSayfasi
+from .hizli_yakala import CanliMetinPenceresi, YakalamaKatmani
+from .ikonlar import ikon, logo_pixmap
+from .kisayol import GenelKisayol, bosta_kalma_sn
+from .sayfalar import (AyarlarSayfasi, BelgeDeposuSayfasi, NelerDegistiSayfasi, YakindaSayfasi,
+                       YaziHazirlamaSayfasi)
+from .tema import R
+
+log = logging.getLogger("akilhocasi")
+
+
+class TakipCalisani(QThread):
+    """Takipteki soruları yeniden arar; cevap bulunanları bildirir."""
+    bulundu = Signal(str)
+
+    def __init__(self, hat, kutuphane, parent=None):
+        super().__init__(parent)
+        self.hat, self.kutuphane = hat, kutuphane
+
+    def run(self) -> None:
+        for t in self.kutuphane.takipteki_sorular():
+            try:
+                c = self.hat.cevapla(t["soru"], "hizli")
+            except Exception:
+                continue
+            if c.durum != Durum.HUKUM_YOK:
+                self.kutuphane.takip_guncelle(t["id"], "bulundu")
+                self.bulundu.emit(t["soru"])
+            else:
+                self.kutuphane.takip_guncelle(t["id"])
+
+
+class BelgeMetniPenceresi(QWidget):
+    """PDF/Word belgesinden çıkarılan metni gösterir; seçili metin sorulabilir."""
+    sor = Signal(str)
+    yaziya = Signal(str)
+
+    def __init__(self, baslik: str, metin: str, parent=None):
+        super().__init__(parent, Qt.Window)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setWindowTitle(f"{baslik} — {UYGULAMA_ADI}")
+        self.setObjectName("Icerik")
+        self.resize(820, 680)
+        yer = QVBoxLayout(self)
+        yer.setContentsMargins(16, 14, 16, 14)
+        b = QLabel(baslik)
+        b.setStyleSheet("font-size:17px; font-weight:700;")
+        yer.addWidget(b)
+        self.metin = QPlainTextEdit(metin)
+        self.metin.setObjectName("Duz")
+        yer.addWidget(self.metin, 1)
+        alt = QHBoxLayout()
+        alt.addStretch(1)
+        sor = QPushButton("  Seçili metni sor")
+        sor.setObjectName("Birincil")
+        sor.setIcon(ikon("danisma", "#FFFFFF", 16))
+        sor.clicked.connect(lambda: self.sor.emit(self.metin.textCursor().selectedText().replace(" ", "\n")
+                                                  or self.metin.toPlainText()[:2000]))
+        alt.addWidget(sor)
+        yazi = QPushButton("  Yazı Hazırlama'ya gönder")
+        yazi.setIcon(ikon("yazi", R["metin"], 16))
+        yazi.clicked.connect(lambda: self.yaziya.emit(self.metin.toPlainText()))
+        alt.addWidget(yazi)
+        yer.addLayout(alt)
+
+
+class GozlemKoprusu(QObject):
+    """Gözlem sunucusunun iş parçacığından arayüze güvenli geçiş (kuyruklu sinyal)."""
+    geldi = Signal(object)
+
+
+class DurumCubugu(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("DurumCubugu")
+        self.setFixedHeight(34)
+        yer = QHBoxLayout(self)
+        yer.setContentsMargins(16, 0, 16, 0)
+        yer.setSpacing(18)
+        self.nokta = QLabel()
+        self.nokta.setFixedSize(10, 10)
+        yer.addWidget(self.nokta)
+        self.canli = QLabel("Canlı")
+        yer.addWidget(self.canli)
+        self.kontrol = QLabel()
+        self.kutuphane = QLabel()
+        self.takip = QLabel()
+        self.etkinlik = QLabel()
+        for w in (self.kontrol, self.kutuphane, self.takip, self.etkinlik):
+            yer.addWidget(w)
+        yer.addStretch(1)
+        self.gozlem = QLabel()
+        self.gozlem.setToolTip("Akıl Hocası Gözlemci eklentisi: tarayıcıda görülen resmî sayfalar")
+        yer.addWidget(self.gozlem)
+        self.model = QLabel()
+        yer.addWidget(self.model)
+        self._yanip = False
+        self._zaman = QTimer(self)
+        self._zaman.timeout.connect(self._nabiz)
+        self._zaman.start(900)
+        self.calisiyor(False)
+
+    def _nabiz(self) -> None:
+        self._yanip = not self._yanip
+        renk = R["camgobegi"] if self._calisiyor else R["yesil"]
+        alfa = "1.0" if self._yanip else "0.45"
+        c = renk.lstrip("#")
+        r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+        self.nokta.setStyleSheet(f"background: rgba({r},{g},{b},{alfa}); border-radius:5px;")
+
+    def etkinlik_yaz(self, mesaj: str) -> None:
+        self.calisiyor(True, mesaj)
+
+    def calisiyor(self, durum: bool, mesaj: str = "") -> None:
+        self._calisiyor = durum
+        self.canli.setText("Güncelleniyor" if durum else "Canlı")
+        self.etkinlik.setText(mesaj)
+
+
+class AnaPencere(QMainWindow):
+    def __init__(self, s):
+        super().__init__()
+        self.s = s
+        self.setWindowTitle(f"{UYGULAMA_ADI}")
+        self.setWindowIcon(QIcon(logo_pixmap(64)))
+        self.resize(1360, 880)
+        self.setMinimumSize(1080, 700)
+        self._cikiliyor = False
+        self._tarama: TaramaCalisani | None = None
+        self._takip: TakipCalisani | None = None
+        self._ogrenme: OgrenmeCalisani | None = None
+        self._aday: AdayModelCalisani | None = None
+        self._pencereler: list[QWidget] = []
+        self._son_pano_bildirim = 0.0
+        self._gozlem_sunucusu = None
+        self._gozlem_koprusu = GozlemKoprusu(self)
+        self._gozlem_koprusu.geldi.connect(self._gozlem_geldi)
+        self._gozlem_sayac: dict[str, int] = {}
+
+        kok = QWidget()
+        kok.setObjectName("Icerik")
+        yatay = QHBoxLayout(kok)
+        yatay.setContentsMargins(0, 0, 0, 0)
+        yatay.setSpacing(0)
+        yatay.addWidget(self._serit_kur())
+        sag = QVBoxLayout()
+        sag.setContentsMargins(0, 0, 0, 0)
+        sag.setSpacing(0)
+        self.yigin = QStackedWidget()
+        sag.addWidget(self.yigin, 1)
+        self.durum = DurumCubugu()
+        sag.addWidget(self.durum)
+        yatay.addLayout(sag, 1)
+        self.setCentralWidget(kok)
+
+        self._sayfalari_kur()
+        self._tepsi_kur()
+        self._kisayol_kur()
+        self._pano_izle()
+        self._model_yukle()
+        self._gozlem_kur()
+
+        self.zaman = QTimer(self)
+        self.zaman.timeout.connect(self._zamanlayici_tik)
+        self.zaman.start(60_000)
+        QTimer.singleShot(4_000, self._zamanlayici_tik)
+        self._durumu_guncelle()
+
+    # ================================================================== kurulum
+    def _serit_kur(self) -> QWidget:
+        serit = QFrame()
+        serit.setObjectName("Serit")
+        serit.setFixedWidth(84)
+        yer = QVBoxLayout(serit)
+        yer.setContentsMargins(10, 16, 10, 14)
+        yer.setSpacing(6)
+        logo = QLabel()
+        logo.setPixmap(logo_pixmap(44))
+        logo.setAlignment(Qt.AlignCenter)
+        yer.addWidget(logo)
+        ad = QLabel("Akıl Hocası")
+        ad.setObjectName("Logo")
+        ad.setAlignment(Qt.AlignCenter)
+        yer.addWidget(ad)
+        yer.addSpacing(14)
+        self.grup = QButtonGroup(self)
+        self.grup.setExclusive(True)
+        self.dugmeler: dict[str, QToolButton] = {}
+
+        def dugme(anahtar: str, ikon_ad: str, metin: str, ipucu: str, sayfa: bool = True) -> QToolButton:
+            d = QToolButton()
+            d.setObjectName("SeritDugme")
+            d.setIcon(ikon(ikon_ad, "#FFFFFF", 22, 1.9))
+            d.setIconSize(QSize(22, 22))
+            d.setText(metin)
+            d.setToolTip(ipucu)
+            d.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            d.setFixedSize(64, 58)
+            d.setCursor(Qt.PointingHandCursor)
+            if sayfa:
+                d.setCheckable(True)
+                self.grup.addButton(d)
+            self.dugmeler[anahtar] = d
+            return d
+
+        for anahtar, ik, metin, ipucu in (
+            ("danisma", "danisma", "Danışma", "Yapay zekâ ile danışma (ana ekran)"),
+            ("yakala", "yakala", "Yakala", "Hızlı Yakala: ekrandan metin al"),
+            ("yazi", "yazi", "Yazı", "Yazı Hazırlama"),
+            ("hesap", "hesap", "Hesapla", "Hesaplama"),
+            ("kontrol", "kontrol", "Kontrol", "Ödeme / evrak ön kontrolü"),
+            ("depo", "depo", "Depo", "Belge Deposu"),
+            ("degisti", "degisti", "Değişenler", "Neler değişti"),
+        ):
+            d = dugme(anahtar, ik, metin, ipucu, sayfa=(anahtar != "yakala"))
+            yer.addWidget(d, 0, Qt.AlignHCenter)
+        yer.addStretch(1)
+        yer.addWidget(dugme("ayarlar", "ayarlar", "Ayarlar", "Ayarlar"), 0, Qt.AlignHCenter)
+        self.dugmeler["yakala"].clicked.connect(self.hizli_yakala)
+        self.rozet = QLabel(self.dugmeler["degisti"])
+        self.rozet.setStyleSheet(f"background:{R['kirmizi']}; color:white; border-radius:8px; font-size:10px;"
+                                 "font-weight:700; padding:0 5px;")
+        self.rozet.move(40, 4)
+        self.rozet.hide()
+        return serit
+
+    def _sayfalari_kur(self) -> None:
+        s = self.s
+        ist = s.kutuphane.istatistik()
+        self.danisma = DanismaSayfasi(s.hat, s.ayarlar.al("profil.ad", ""), kutuphane_bos=ist["madde"] == 0)
+        self.danisma.hizli_yakala_istendi.connect(self.hizli_yakala)
+        self.danisma.goruntu_geldi.connect(self.goruntu_ac)
+        self.danisma.belge_geldi.connect(self.belge_ice_aktar)
+        self.danisma.yaziya_gonder.connect(self.yaziya_gonder)
+        self.danisma.belge_ac.connect(self.belge_ac)
+        self.danisma.geri_bildirim.connect(self.geri_bildirim)
+        self.danisma.guncelle_istendi.connect(lambda: self.guncelle(["gece", "hafif", "derin"]))
+        self.danisma.faydali.connect(self._faydali)
+        self.danisma.kaynak_tiklandi.connect(self._kaynak_tiklandi)
+        self.yazi = YaziHazirlamaSayfasi()
+        hesap = YakindaSayfasi("Hesaplama", "Tutarlar dil modeliyle değil, tarihli ve kaynaklı parametrelerle "
+                               "kural tabanlı motorla hesaplanır; her satırın dayanağı gösterilir.", "Faz 4",
+                               ["Kıst maaş ve maaş farkı", "Yurt içi / yurt dışı harcırah", "Ek ders ve fazla çalışma",
+                                "Terfi farkı, aile yardımı, jüri ücreti", "Her parametre: değer, geçerlilik tarihi, kaynak"],
+                               R["maas"])
+        kontrol = YakindaSayfasi("Ödeme / Evrak Ön Kontrolü", "Ödeme emri ve eklerini MYHBY, TOGÜ ön mali "
+                                 "kontrol listeleri ve Sayıştay bulgularına göre denetler.", "Faz 5",
+                                 ["Eksik belge listesi", "Tutar ve ekonomik kod biçim kontrolü",
+                                  "TC / IBAN sağlama kontrolü", "Olası Sayıştay bulgusu uyarısı"], R["satinalma"])
+        self.depo_sayfa = BelgeDeposuSayfasi(s.depo)
+        self.depo_sayfa.guncelle_istendi.connect(lambda: self.guncelle(["derin"]))
+        self.degisti = NelerDegistiSayfasi(s.kutuphane, s.ogrenme, s.siralayici)
+        self.degisti.ogren_istendi.connect(self.ogren)
+        self.degisti.soru_tekrar.connect(lambda soru: (self._sayfa("danisma"), self.danisma.sor(soru, "derin")))
+        self.ayarlar_sayfa = AyarlarSayfasi(s.ayarlar, s.yollar, self._durum_bilgisi())
+        self.ayarlar_sayfa.kaydedildi.connect(self._ayarlar_kaydedildi)
+        self.ayarlar_sayfa.guncelle_istendi.connect(lambda: self.guncelle(["hafif", "gece"]))
+        self.ayarlar_sayfa.aday_model_istendi.connect(self._aday_model_dene)
+        self.ayarlar_sayfa.gozlem_degisti.connect(self._gozlem_kur)
+        self.sayfalar = {"danisma": self.danisma, "yazi": self.yazi, "hesap": hesap, "kontrol": kontrol,
+                         "depo": self.depo_sayfa, "degisti": self.degisti, "ayarlar": self.ayarlar_sayfa}
+        for anahtar, sayfa in self.sayfalar.items():
+            self.yigin.addWidget(sayfa)
+            self.dugmeler[anahtar].clicked.connect(lambda _=False, a=anahtar: self._sayfa(a))
+        self._sayfa("danisma")
+
+    def _sayfa(self, anahtar: str) -> None:
+        self.dugmeler[anahtar].setChecked(True)
+        self.yigin.setCurrentWidget(self.sayfalar[anahtar])
+        if anahtar == "depo":
+            self.depo_sayfa.yenile()
+        elif anahtar == "degisti":
+            self.degisti.yenile()
+            self.rozet.hide()
+
+    def _tepsi_kur(self) -> None:
+        self.tepsi = QSystemTrayIcon(QIcon(logo_pixmap(32)), self)
+        self.tepsi.setToolTip(UYGULAMA_ADI)
+        menu = QMenu()
+        for metin, fn in (("Aç", self.goster), ("Hızlı Yakala", self.hizli_yakala),
+                          ("Şimdi güncelle", lambda: self.guncelle(["hafif", "gece"])), (None, None),
+                          ("Çıkış", self.cik)):
+            if metin is None:
+                menu.addSeparator()
+                continue
+            a = QAction(metin, self)
+            a.triggered.connect(fn)
+            menu.addAction(a)
+        self.tepsi.setContextMenu(menu)
+        self.tepsi.activated.connect(lambda neden: self.goster() if neden == QSystemTrayIcon.ActivationReason.Trigger else None)
+        self.tepsi.messageClicked.connect(self._bildirim_tiklandi)
+        self._bildirim_eylemi = None
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tepsi.show()
+
+    def _bildirim(self, baslik: str, metin: str, eylem=None) -> None:
+        self._bildirim_eylemi = eylem
+        if self.tepsi.isVisible():
+            self.tepsi.showMessage(baslik, metin, QIcon(logo_pixmap(32)), 6000)
+
+    def _bildirim_tiklandi(self) -> None:
+        if self._bildirim_eylemi:
+            self._bildirim_eylemi()
+        self._bildirim_eylemi = None
+
+    def _kisayol_kur(self) -> None:
+        self.kisayol = GenelKisayol()
+        self.kisayol.tetiklendi.connect(self.hizli_yakala)
+        etkin = self.kisayol.kaydet(self.s.ayarlar.al("kisayol.hizli_yakala", "Win+Shift+Y"),
+                                    self.s.ayarlar.al("kisayol.yedek", "Ctrl+Alt+Shift+Y"))
+        self.dugmeler["yakala"].setToolTip(f"Hızlı Yakala ({etkin})" if etkin else "Hızlı Yakala")
+        log.info("Kısayol: %s", etkin or "kaydedilemedi")
+
+    def _pano_izle(self) -> None:
+        QGuiApplication.clipboard().dataChanged.connect(self._pano_degisti)
+
+    def _pano_degisti(self) -> None:
+        if not self.s.ayarlar.al("ocr.pano_izleme", True) or self.isActiveWindow():
+            return
+        veri = QGuiApplication.clipboard().mimeData()
+        simdi = datetime.now().timestamp()
+        if veri and veri.hasImage() and simdi - self._son_pano_bildirim > 5:
+            self._son_pano_bildirim = simdi
+            self._bildirim("Panoda ekran görüntüsü var", "Metnini almak için tıklayın.",
+                           lambda: self.goruntu_ac(QGuiApplication.clipboard().image()))
+
+    def _model_yukle(self) -> None:
+        yol = self.s.ayarlar.al("llm.model_yolu", "")
+        if not yol:
+            self.durum.model.setText("Alıntıya dayalı mod (model yok)")
+            return
+        self.durum.model.setText("Model yükleniyor…")
+        self._yukleyici = ModelYukleyici(yol, self.s.ayarlar.al("llm.baglam", 8192),
+                                         self.s.ayarlar.al("llm.is_parcacigi", 0), self)
+        self._yukleyici.bitti.connect(self._model_hazir)
+        self._yukleyici.start()
+
+    def _model_hazir(self, model) -> None:
+        self.s.hat.model = model
+        self.durum.model.setText(f"Model: {model.ad}" if model.hazir else "Model yüklenemedi; alıntıya dayalı mod")
+
+    # ================================================================== Hızlı Yakala
+    def hizli_yakala(self) -> None:
+        gorunurdu = self.isVisible() and not self.isMinimized()
+        self.hide()
+
+        def baslat():
+            self.katman = YakalamaKatmani()
+            self.katman.secildi.connect(lambda img: (self._geri_getir(gorunurdu), self.goruntu_ac(img)))
+            self.katman.iptal.connect(lambda: self._geri_getir(gorunurdu))
+            self.katman.show()
+            self.katman.activateWindow()
+            self.katman.raise_()
+
+        QTimer.singleShot(220, baslat)
+
+    def _geri_getir(self, gorunurdu: bool) -> None:
+        if gorunurdu:
+            self.show()
+
+    def goruntu_ac(self, img: QImage) -> None:
+        if img is None or img.isNull():
+            return
+        p = CanliMetinPenceresi(img, self.s.ocr, self.s.ayarlar.al("gizlilik.maske_varsayilan", True))
+        p.sor.connect(self._yakalanani_sor)
+        p.yaziya.connect(self.yaziya_gonder)
+        p.duzeltildi.connect(self._ocr_duzeltildi)
+        p.show()
+        p.raise_()
+        p.activateWindow()
+        self._pencereler = [w for w in self._pencereler if w.isVisible()] + [p]
+
+    def _yakalanani_sor(self, metin: str) -> None:
+        self.goster()
+        self._sayfa("danisma")
+        self.danisma.soruyu_doldur(metin.strip())
+
+    def belge_ice_aktar(self, yol: str) -> None:
+        uzanti = Path(yol).suffix.lower()
+        if uzanti in (".png", ".jpg", ".jpeg", ".bmp"):
+            self.goruntu_ac(QImage(yol))
+            return
+        from ..crawler.depo import metin_cikar
+        icerik = Path(yol).read_bytes()
+        metin = metin_cikar(icerik)
+        if not metin.strip() and uzanti == ".pdf":
+            img = _pdf_ilk_sayfa(icerik)
+            if img is not None:
+                self.goruntu_ac(img)
+                return
+            QMessageBox.information(self, UYGULAMA_ADI, "Bu PDF taranmış görünüyor; sayfa görüntüsüne dönüştürmek "
+                                    "için PyMuPDF gerekir (README).")
+            return
+        p = BelgeMetniPenceresi(Path(yol).name, metin)
+        p.sor.connect(self._yakalanani_sor)
+        p.yaziya.connect(self.yaziya_gonder)
+        p.show()
+        self._pencereler.append(p)
+
+    # ================================================================== cevap eylemleri
+    def yaziya_gonder(self, veri) -> None:
+        metin = veri.duz_metin() if isinstance(veri, Cevap) else str(veri)
+        self.goster()
+        self.yazi.metin_al(metin)
+        self._sayfa("yazi")
+
+    def belge_ac(self, ref) -> None:
+        kayit = self.s.depo.bul(ref.kod) if ref.kod else None
+        if kayit:
+            import tempfile
+            hedef = self.s.depo.kopya_ver(kayit, Path(tempfile.gettempdir()) / "AkilHocasi")
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(hedef)))
+        elif ref.url:
+            QDesktopServices.openUrl(QUrl(ref.url))
+        else:
+            self._sayfa("depo")
+            self.depo_sayfa.ara.setText(ref.kod.replace("TOGÜ.", ""))
+
+    def _faydali(self, cevap: Cevap) -> None:
+        if cevap.olay_id:
+            self.s.ogrenme.geri_bildirim(cevap.olay_id, +1, cevap)
+        self.durum.etkinlik.setText("Teşekkürler: cevap öğrenme hafızasına ve soru-cevap bankasına eklendi")
+
+    def _kaynak_tiklandi(self, cevap: Cevap, kid: str) -> None:
+        k = cevap.kaynak(kid)
+        if k and cevap.olay_id:
+            self.s.ogrenme.tiklama(cevap.olay_id, k.pasaj.belge_kimlik, k.pasaj.madde_no)
+
+    def _ocr_duzeltildi(self, yanlis: str, dogru: str) -> None:
+        self.s.ogrenme.ocr_duzeltme_kaydet(yanlis, dogru)
+
+    def geri_bildirim(self, cevap: Cevap) -> None:
+        if cevap.olay_id:
+            self.s.ogrenme.geri_bildirim(cevap.olay_id, -1, cevap)
+        yol = self.s.yollar.gunluk / "geri_bildirim.jsonl"
+        kayit = {"zaman": datetime.now().isoformat(timespec="seconds"), "soru": cevap.soru,
+                 "durum": cevap.durum.value, "kaynaklar": [k.etiket for k in cevap.kaynaklar]}
+        with yol.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(kayit, ensure_ascii=False) + "\n")
+        QMessageBox.information(self, UYGULAMA_ADI, "Bildiriminiz kaydedildi. Soru incelenip altın soru setine "
+                                "ve gerekirse işlem kartına eklenecek.")
+
+    # ================================================================== güncelleme
+    def _zamanlayici_tik(self) -> None:
+        self._durumu_guncelle()
+        if self._tarama and self._tarama.isRunning():
+            return
+        z = self.s.zamanlayici
+        son = {g: _dt(self.s.kutuphane.zamanlayici_son(g)) for g in GOREVLER}
+        bekleyen = z.bekleyenler(datetime.now(), son, bostayken=bosta_kalma_sn() > 600)
+        if "sabah" in bekleyen:
+            self._sabah_ozeti()
+            self.s.kutuphane.zamanlayici_yaz("sabah")
+            bekleyen.remove("sabah")
+        if "ogrenme" in bekleyen:
+            bekleyen.remove("ogrenme")
+            if not bekleyen:          # ağ taraması yokken öğren (aynı anda ikisi çalışmasın)
+                self.ogren()
+        if bekleyen:
+            self.guncelle(bekleyen)
+
+    def guncelle(self, gorevler: list[str]) -> None:
+        if self.s.tarayici is None:
+            self._bildirim(UYGULAMA_ADI, "Güncelleme için 'requests' paketi gerekli (README).")
+            return
+        if self._tarama and self._tarama.isRunning():
+            return
+        self.durum.calisiyor(True, "Güncelleme başladı")
+        self._tarama = TaramaCalisani(self.s.tarayici, gorevler, self)
+        self._tarama.ilerleme.connect(self.durum.etkinlik_yaz)
+        self._tarama.gorev_bitti.connect(self._gorev_bitti)
+        self._tarama.hepsi_bitti.connect(self._tarama_bitti)
+        self._tarama.start()
+
+    def _gorev_bitti(self, rapor) -> None:
+        log.info("%s: %s; hata: %d", rapor.gorev, rapor.ozet, len(rapor.hatalar))
+        for h in rapor.hatalar[:5]:
+            log.warning("  %s", h)
+        if rapor.yeni or rapor.guncellenen:
+            self.rozet.setText(str(rapor.yeni + rapor.guncellenen))
+            self.rozet.adjustSize()
+            self.rozet.show()
+
+    def _tarama_bitti(self) -> None:
+        self.durum.calisiyor(False, "")
+        self._durumu_guncelle()
+        if self.s.kutuphane.takipteki_sorular() and not (self._takip and self._takip.isRunning()):
+            self._takip = TakipCalisani(self.s.hat, self.s.kutuphane, self)
+            self._takip.bulundu.connect(self._takip_bulundu)
+            self._takip.start()
+
+    def _takip_bulundu(self, soru: str) -> None:
+        self._bildirim("Takipteki sorunuz için kaynak bulundu", soru[:120],
+                       lambda q=soru: (self.goster(), self._sayfa("danisma"), self.danisma.sor(q, "derin")))
+
+    # ================================================================== öğrenme
+    def ogren(self) -> None:
+        if (self._ogrenme and self._ogrenme.isRunning()) or (self._tarama and self._tarama.isRunning()):
+            return
+        self.durum.calisiyor(True, "Öz değerlendirme ve öğrenme")
+        self._ogrenme = OgrenmeCalisani(self.s, self)
+        self._ogrenme.ilerleme.connect(self.durum.etkinlik_yaz)
+        self._ogrenme.bitti.connect(self._ogrenme_bitti)
+        self._ogrenme.start()
+
+    def _ogrenme_bitti(self, rapor: list) -> None:
+        for satir in rapor:
+            log.info("Öğrenme: %s", satir)
+        self.durum.calisiyor(False, "Öğrenme tamamlandı")
+        if self.yigin.currentWidget() is self.degisti:
+            self.degisti.yenile()
+
+    def _aday_model_dene(self, yol: str) -> None:
+        if self._aday and self._aday.isRunning():
+            return
+        self._aday_yolu = yol
+        self.durum.calisiyor(True, "Aday model altın soru setinde karşılaştırılıyor")
+        self._aday = AdayModelCalisani(self.s, yol, self)
+        self._aday.bitti.connect(self._aday_sonucu)
+        self._aday.start()
+
+    def _aday_sonucu(self, karar: dict) -> None:
+        self.durum.calisiyor(False, "")
+        if karar.get("devreye_al"):
+            self.s.hat.model = karar["model"]
+            self.s.ayarlar.ayarla("llm.model_yolu", self._aday_yolu)
+            self.s.ayarlar.kaydet()
+            self.durum.model.setText(f"Model: {karar['model'].ad}")
+        ayrinti = ""
+        if "eski" in karar and "yeni" in karar:
+            ayrinti = (f"\n\nAltın set: mevcut model {karar['eski']['gecen']}/{karar['eski']['toplam']} doğru "
+                       f"(kritik {karar['eski']['kritik']}), aday {karar['yeni']['gecen']}/{karar['yeni']['toplam']} "
+                       f"(kritik {karar['yeni']['kritik']}).")
+        QMessageBox.information(self, UYGULAMA_ADI, ("Aday model devreye alındı: " if karar.get("devreye_al")
+                                                    else "Aday model devreye alınmadı: ") + karar.get("neden", "") + ayrinti)
+
+    def _sabah_ozeti(self) -> None:
+        n = self.s.kutuphane.istatistik()["bugun_degisiklik"]
+        son = self.s.kutuphane.son_degisiklikler(1)
+        metin = f"Son 24 saatte {len(son)} değişiklik." if son else "Son 24 saatte değişiklik yok."
+        self._bildirim("Bugün neler değişti", metin, lambda: (self.goster(), self._sayfa("degisti")))
+        if n:
+            self.rozet.setText(str(n))
+            self.rozet.adjustSize()
+            self.rozet.show()
+
+    def _durumu_guncelle(self) -> None:
+        ist = self.s.kutuphane.istatistik()
+        son = _dt(self.s.kutuphane.zamanlayici_son("hafif"))
+        sonraki = self.s.zamanlayici.sonraki(datetime.now())
+        self.durum.kontrol.setText(f"Son kontrol {son:%H:%M} · Sonraki {sonraki:%H:%M}" if son
+                                   else f"İlk kontrol bekleniyor · {sonraki:%H:%M}")
+        self.durum.kutuphane.setText(f"Kütüphane: {ist['madde']:,} madde · {ist['belge']:,} belge".replace(",", "."))
+        self.durum.takip.setText(f"Takipte: {ist['takip']} soru" if ist["takip"] else "")
+        if not self.durum._calisiyor and ist["bugun_degisiklik"]:
+            self.durum.etkinlik.setText(f"Bugün {ist['bugun_degisiklik']} değişiklik")
+
+    def _durum_bilgisi(self) -> dict:
+        ist = self.s.kutuphane.istatistik()
+        return {"ocr_motorlari": [m.ad for m in self.s.ocr.motorlar],
+                "model": "Model yüklü" if self.s.hat.model.hazir else "Alıntıya dayalı mod",
+                "kutuphane": f"{ist['belge']} belge, {ist['madde']} madde, {ist['soru_cevap']} soru-cevap"}
+
+    # ================================================================== tarayıcı gözlemcisi
+    def _gozlem_kur(self) -> None:
+        """Yerel gözlem sunucusunu ayarlara göre (yeniden) başlatır."""
+        from ..gozlem.kurulum import anahtari_hazirla, eklentiyi_hazirla
+        from ..gozlem.sunucu import GozlemSunucusu
+        if self._gozlem_sunucusu:
+            self._gozlem_sunucusu.durdur()
+            self._gozlem_sunucusu = None
+        a = self.s.ayarlar
+        if not a.al("gozlem.acik", True):
+            self.durum.gozlem.setText("")
+            self.ayarlar_sayfa.gozlem_durumu_yaz("Gözlemci kapalı. Eklentiden gelen sayfalar değerlendirilmiyor.")
+            return
+        try:
+            eklentiyi_hazirla(self.s.yollar.kok)
+        except OSError as e:
+            log.warning("Eklenti klasörü hazırlanamadı: %s", e)
+        anahtar = anahtari_hazirla(a)
+        self.ayarlar_sayfa.gozlem_anahtar.setText(anahtar)
+        port = int(a.al("gozlem.port", 47231))
+        sunucu = GozlemSunucusu(self.s.gozlem, anahtar, port, tarayici=self.s.tarayici,
+                                bildir=self._gozlem_koprusu.geldi.emit)
+        if sunucu.baslat():
+            self._gozlem_sunucusu = sunucu
+            self.durum.gozlem.setText("Gözlemci: hazır")
+            self.ayarlar_sayfa.gozlem_durumu_yaz(f"Gözlemci 127.0.0.1:{port} üzerinde hazır. Eklentiyi eşleştirdiğinizde "
+                                                 "gezdiğiniz resmî sayfalar kütüphaneye eklenir.")
+        else:
+            self.durum.gozlem.setText("Gözlemci: kapalı")
+            self.ayarlar_sayfa.gozlem_durumu_yaz(f"{port} numaralı bağlantı noktası kullanımda. Başka bir numara seçip "
+                                                 "kaydedin ve eklentide de aynı numarayı girin.")
+
+    def _gozlem_geldi(self, sonuc: dict) -> None:
+        karar = sonuc.get("karar", "")
+        self._gozlem_sayac[karar] = self._gozlem_sayac.get(karar, 0) + 1
+        eklenen = self._gozlem_sayac.get("kabul", 0)
+        kuyruk = self._gozlem_sunucusu.kuyruk.qsize() if self._gozlem_sunucusu else 0
+        self.durum.gozlem.setText(f"Gözlemci: {eklenen} sayfa eklendi" + (f" · {kuyruk} dosya sırada" if kuyruk else ""))
+        if karar == "kabul":
+            self.durum.etkinlik.setText(f"Gözlemden eklendi: {sonuc.get('kimlik', '')[:60]}")
+            self._durumu_guncelle()
+        ozet = ", ".join(f"{k} {v}" for k, v in sorted(self._gozlem_sayac.items()))
+        self.ayarlar_sayfa.gozlem_durumu_yaz(f"Gözlemci bağlı. Bu oturumda: {ozet}.")
+
+    def _ayarlar_kaydedildi(self) -> None:
+        from ..crawler.zamanlayici import Zamanlayici
+        self.s.zamanlayici = Zamanlayici(self.s.ayarlar.al("guncelleme"), self.s.makine_kimligi)
+        self._kisayol_kur()
+        self._model_yukle()
+        self._gozlem_kur()
+        self._durumu_guncelle()
+        self._bildirim(UYGULAMA_ADI, "Ayarlar kaydedildi.")
+
+    # ================================================================== pencere
+    def goster(self) -> None:
+        self.show()
+        self.setWindowState(self.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
+        self.raise_()
+        self.activateWindow()
+
+    def closeEvent(self, e) -> None:
+        if not self._cikiliyor and self.tepsi.isVisible():
+            e.ignore()
+            self.hide()
+            if not self.s.ayarlar.al("arayuz.tepsi_bildirildi", False):
+                self._bildirim(UYGULAMA_ADI, "Program arka planda çalışmaya ve saat başı güncellemeye devam ediyor. "
+                               "Tepsideki simgeden açabilirsiniz.")
+                self.s.ayarlar.ayarla("arayuz.tepsi_bildirildi", True)
+                self.s.ayarlar.kaydet()
+            return
+        self.cik()
+
+    def cik(self) -> None:
+        self._cikiliyor = True
+        if self._gozlem_sunucusu:
+            self._gozlem_sunucusu.durdur()
+        if self.s.tarayici:
+            self.s.tarayici.durdur.set()
+        for t in (self._tarama, self._takip, self._ogrenme, self._aday):
+            if t and t.isRunning():
+                t.wait(3000)
+        self.kisayol.kaldir()
+        self.tepsi.hide()
+        from PySide6.QtWidgets import QApplication
+        QApplication.quit()
+
+
+def _dt(iso: str | None):
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+
+
+def _pdf_ilk_sayfa(icerik: bytes) -> QImage | None:
+    try:
+        import fitz
+    except ImportError:
+        return None
+    with fitz.open(stream=icerik, filetype="pdf") as doc:
+        pm = doc[0].get_pixmap(dpi=200)
+        return QImage(pm.samples, pm.width, pm.height, pm.stride,
+                      QImage.Format_RGBA8888 if pm.alpha else QImage.Format_RGB888).copy()

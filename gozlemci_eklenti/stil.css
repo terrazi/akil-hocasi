@@ -1,0 +1,48 @@
+:root {
+  --zemin: #F4F5FB; --yuzey: #FFFFFF; --cizgi: #E5E7F0; --metin: #1E2140; --metin2: #565B76; --soluk: #6B7088;
+  --ana: #4F46E5; --ana-koyu: #4338CA; --ana-acik: #EEF0FF;
+  --yesil: #15803D; --yesil-zemin: #DCFCE7; --sari: #B45309; --sari-zemin: #FEF3C7;
+  --kirmizi: #B91C1C; --kirmizi-zemin: #FEE2E2; --gri-zemin: #E2E8F0;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 13px/1.45 "Segoe UI", system-ui, sans-serif; color: var(--metin); background: var(--zemin); }
+.ust { display: flex; align-items: center; gap: 10px; padding: 12px 14px; color: #fff;
+  background: linear-gradient(135deg, #2E2A78, #4338CA 60%, #8B5CF6); }
+.ust img { width: 28px; height: 28px; border-radius: 7px; background: #fff2; }
+.ust b { font-size: 14px; display: block; }
+.ust small { opacity: .85; }
+main { padding: 12px 14px 14px; display: grid; gap: 10px; }
+.kart { background: var(--yuzey); border: 1px solid var(--cizgi); border-radius: 12px; padding: 11px 12px; }
+.kart h2 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--soluk); }
+.satir { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rozet { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+.rozet::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.iyi { color: var(--yesil); background: var(--yesil-zemin); }
+.uyari { color: var(--sari); background: var(--sari-zemin); }
+.kotu { color: var(--kirmizi); background: var(--kirmizi-zemin); }
+.notr { color: var(--metin2); background: var(--gri-zemin); }
+.sayilar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; text-align: center; }
+.sayilar div { background: var(--zemin); border-radius: 8px; padding: 6px 2px; }
+.sayilar b { display: block; font-size: 16px; }
+.sayilar span { font-size: 11px; color: var(--soluk); }
+button { font: inherit; font-weight: 600; border: 0; border-radius: 9px; padding: 8px 12px; cursor: pointer;
+  background: var(--ana); color: #fff; }
+button:hover { background: var(--ana-koyu); }
+button:disabled { background: var(--gri-zemin); color: var(--soluk); cursor: default; }
+button.ikincil { background: var(--ana-acik); color: var(--ana-koyu); }
+button.ikincil:hover { background: #E0E3FF; }
+.dugmeler { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.ilerleme { height: 7px; border-radius: 99px; background: var(--zemin); overflow: hidden; margin: 8px 0 4px; }
+.ilerleme > div { height: 100%; width: 0; background: linear-gradient(90deg, var(--ana), #8B5CF6); transition: width .3s; }
+.soluk { color: var(--soluk); font-size: 12px; }
+.adres { font-size: 12px; color: var(--metin2); word-break: break-all; }
+label.anahtar { display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; }
+input[type="checkbox"] { width: 34px; height: 18px; appearance: none; background: var(--gri-zemin); border-radius: 99px; position: relative; cursor: pointer; transition: background .2s; }
+input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .2s; box-shadow: 0 1px 2px #0003; }
+input[type="checkbox"]:checked { background: var(--ana); }
+input[type="checkbox"]:checked::after { left: 18px; }
+.alan { display: grid; gap: 4px; margin-bottom: 10px; }
+.alan input, .alan select { font: inherit; padding: 8px 10px; border: 1px solid var(--cizgi); border-radius: 8px; background: #fff; color: var(--metin); }
+.alan input:focus, .alan select:focus { outline: 2px solid var(--ana-acik); border-color: var(--ana); }
+.bilgi { background: var(--ana-acik); color: var(--ana-koyu); border-radius: 10px; padding: 9px 11px; font-size: 12px; }
+ul.kurallar { margin: 6px 0 0; padding-left: 18px; color: var(--metin2); font-size: 12px; }

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <title>Akıl Hocası Gözlemci</title>
+  <link rel="stylesheet" href="stil.css">
+  <style>body { width: 340px; }</style>
+</head>
+<body>
+  <div class="ust">
+    <img src="simgeler/simge48.png" alt="">
+    <div><b>Akıl Hocası Gözlemci</b><small>Resmî sayfaları kaynak havuzuna ekler</small></div>
+  </div>
+  <main>
+    <section class="kart">
+      <div class="satir"><h2>Uygulama</h2><span id="baglanti" class="rozet notr">Denetleniyor</span></div>
+      <div class="sayilar">
+        <div><b id="sKabul">0</b><span>eklendi</span></div>
+        <div><b id="sAyni">0</b><span>güncel</span></div>
+        <div><b id="sIpucu">0</b><span>ipucu</span></div>
+        <div><b id="sRet">0</b><span>atlandı</span></div>
+      </div>
+      <p class="soluk" id="baglantiNotu" hidden></p>
+    </section>
+
+    <section class="kart">
+      <label class="anahtar">
+        <span><b>Gezerken gözlemle</b><br><span class="soluk">Açtığınız resmî sayfalar kendiliğinden eklenir</span></span>
+        <input type="checkbox" id="pasif">
+      </label>
+    </section>
+
+    <section class="kart">
+      <h2>Bu sayfa</h2>
+      <div class="adres" id="sekmeAdresi">—</div>
+      <div class="soluk" id="sekmeDurumu"></div>
+      <div class="dugmeler"><button id="tara" disabled>Bu siteyi tara</button></div>
+    </section>
+
+    <section class="kart" id="taramaKarti" hidden>
+      <div class="satir"><h2>Site taraması</h2><span id="taramaRozeti" class="rozet notr"></span></div>
+      <div class="adres" id="taramaKok"></div>
+      <div class="ilerleme"><div id="taramaCubuk"></div></div>
+      <div class="soluk" id="taramaBilgi"></div>
+      <div class="soluk" id="taramaNeden"></div>
+      <div class="dugmeler">
+        <button id="duraklat" class="ikincil">Duraklat</button>
+        <button id="devam">Devam</button>
+        <button id="sifirla" class="ikincil">Sıfırla</button>
+      </div>
+    </section>
+
+    <div class="satir">
+      <span class="soluk">Kamu sistemlerine ve giriş sayfalarına girilmez.</span>
+      <button id="ayarlar" class="ikincil">Ayarlar</button>
+    </div>
+  </main>
+  <script src="kurallar.js"></script>
+  <script src="acilir.js"></script>
+</body>
+</html>
