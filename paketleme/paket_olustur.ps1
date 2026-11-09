@@ -58,17 +58,32 @@ $llama = Join-Path $Derleme "llama"
 if (-not (Test-Path (Join-Path $llama "llama-server.exe"))) {
     $basliklar = @{ "User-Agent" = "akilhocasi-derleme"; "Accept" = "application/vnd.github+json" }
     if ($env:GITHUB_TOKEN) { $basliklar["Authorization"] = "Bearer $env:GITHUB_TOKEN" }
-    $yayin = Invoke-RestMethod "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" -Headers $basliklar
-    $varlik = $yayin.assets | Where-Object { $_.name -match "bin-win-cpu-x64\.zip$" } | Select-Object -First 1
-    if (-not $varlik) { $varlik = $yayin.assets | Where-Object { $_.name -match "bin-win-avx2-x64\.zip$" } | Select-Object -First 1 }
-    if (-not $varlik) { throw "llama.cpp Windows CPU paketi bulunamadı ($($yayin.tag_name))" }
+    # Son sürümlerden Windows x64 CPU paketini seç (adlandırma sürümden sürüme değişebildiği için geniş eşleşme)
+    $yayinlar = Invoke-RestMethod "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=15" -Headers $basliklar
+    $yayin = $null; $varlik = $null
+    foreach ($y in $yayinlar) {
+        if ($y.prerelease -or $y.draft) { continue }
+        $adaylar = @($y.assets | Where-Object { $_.name -match "win" -and $_.name -match "x64" -and $_.name -match "\.zip$" -and
+                                                $_.name -notmatch "cuda|cudart|vulkan|hip|sycl|opencl|arm64|kompute|rpc|radeon" })
+        $tercih = $adaylar | Where-Object { $_.name -match "cpu" } | Select-Object -First 1
+        if (-not $tercih) { $tercih = $adaylar | Where-Object { $_.name -match "avx2" } | Select-Object -First 1 }
+        if ($tercih) { $yayin = $y; $varlik = $tercih; break }
+    }
+    if (-not $varlik) {
+        foreach ($y in ($yayinlar | Select-Object -First 3)) { Write-Host "$($y.tag_name): $(($y.assets | ForEach-Object { $_.name }) -join ', ')" }
+        throw "llama.cpp Windows x64 CPU paketi son sürümlerde bulunamadı"
+    }
+    Write-Host "llama.cpp $($yayin.tag_name): $($varlik.name)"
     $zip = Join-Path $Derleme "llama.zip"
     $gecici = Join-Path $Derleme "llama_acik"
     Remove-Item $gecici -Recurse -Force -ErrorAction SilentlyContinue
     Invoke-WebRequest $varlik.browser_download_url -OutFile $zip
     Expand-Archive $zip -DestinationPath $gecici -Force
     $sunucu = Get-ChildItem $gecici -Recurse -Filter "llama-server.exe" | Select-Object -First 1
-    if (-not $sunucu) { throw "llama-server.exe zip içinde yok" }
+    if (-not $sunucu) {
+        Get-ChildItem $gecici -Recurse -Filter "*.exe" | ForEach-Object { Write-Host "  $($_.Name)" }
+        throw "llama-server.exe zip içinde yok ($($varlik.name))"
+    }
     New-Item -ItemType Directory -Force $llama | Out-Null
     # Yalnızca sunucu ve DLL'ler pakete girer (diğer araçlar gereksiz yer kaplar)
     Copy-Item $sunucu.FullName $llama -Force
