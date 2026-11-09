@@ -46,6 +46,17 @@ VARSAYILAN_AYARLAR: dict = {
         "en_az_ornek": 200,
         "en_az_bellek_gb": 15,
     },
+    "yz": {
+        "sohbet_modeli": "",         # boşsa kurulu modellerin bu bilgisayara uyan en iyisi
+        "anlam_modeli": "",
+        "model_klasoru": "",         # boşsa veri klasöründeki "modeller"
+        "ayna": "",                  # kurum içi Hugging Face aynası (isteğe bağlı)
+        "ortak_klasor": "",          # model dosyalarının konduğu ortak ağ klasörü (isteğe bağlı)
+        "sunucu_yolu": "",           # boşsa programla gelen llama-server
+        "kendini_gelistir": True,    # boştayken gelişim döngüsü (sınav, ders, strateji, model yarışı)
+        "gelisim_suresi_dk": 45,
+        "kurulum_soruldu": False,
+    },
     "gozlem": {
         "acik": True,                # Akıl Hocası Gözlemci eklentisinden gelen sayfaları değerlendir
         "port": 47231,               # yalnız 127.0.0.1

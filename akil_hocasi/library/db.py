@@ -146,6 +146,7 @@ class Pasaj:
     yayin_tarihi: str = ""
     son_kontrol: str = ""
     atiflar: list[str] = field(default_factory=list)
+    anlam: float = 0.0           # anlam aramasındaki benzerlik (0..1); kelime aramasından geldiyse 0
 
     @property
     def etiket(self) -> str:
@@ -341,6 +342,10 @@ class Kutuphane:
             yayin_tarihi=r["yayin_tarihi"] or "",
             son_kontrol=(k["son_kontrol"] if k and k["son_kontrol"] else r["indirme_tarihi"]),
             atiflar=atif)
+
+    def pasaj_getir(self, madde_id: int, skor: float = 0.0) -> Pasaj | None:
+        with self._kilit:
+            return self._pasaj(madde_id, skor)
 
     def madde_getir(self, kimlik: str, madde_no: str, tarih: str | None = None) -> Pasaj | None:
         """Belgenin maddesini getirir; tarih verilirse o tarihte yürürlükte olan metni."""

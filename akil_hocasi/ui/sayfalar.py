@@ -1013,3 +1013,308 @@ class KaynakHavuzuSayfasi(QWidget):
         oge = self.gunluk.item(indeks.row(), sutun)
         if oge and oge.text().startswith("http"):
             QDesktopServices.openUrl(QUrl(oge.text()))
+
+
+class ZekaSayfasi(QWidget):
+    """Yapay zekâ ve çekirdek: modeller, ilkeler, Yordam Kitabı, ilke karnesi, dersler, ayarlar, gelişim geçmişi."""
+
+    kur_istendi = Signal(list)
+    kullan_istendi = Signal(str)
+    sil_istendi = Signal(str)
+    durdur_istendi = Signal()
+    gelistir_istendi = Signal()
+
+    def __init__(self, s, parent=None):
+        super().__init__(parent)
+        self.s = s
+        dis = QVBoxLayout(self)
+        dis.setContentsMargins(0, 0, 0, 0)
+        kaydirma = QScrollArea()
+        kaydirma.setWidgetResizable(True)
+        ic = QWidget()
+        yer = QVBoxLayout(ic)
+        yer.setContentsMargins(32, 26, 32, 22)
+        yer.setSpacing(14)
+        _baslik(yer, "Yapay Zekâ ve Çekirdek", "Akıl Hocası'nın yerel dil modeli, temel çalışma ilkeleri, iş akışı "
+                                               "yordamları ve kendini geliştirme kaydı. Modeller bu bilgisayarda çalışır; "
+                                               "sorular ve belgeler dışarı gönderilmez.")
+        yer.addWidget(self._model_karti())
+        izgara = QGridLayout()
+        izgara.setSpacing(14)
+        izgara.addWidget(self._cekirdek_karti(), 0, 0)
+        izgara.addWidget(self._karne_karti(), 0, 1)
+        izgara.setColumnStretch(0, 1)
+        izgara.setColumnStretch(1, 1)
+        yer.addLayout(izgara)
+        yer.addWidget(self._gelisim_karti())
+        yer.addStretch(1)
+        kaydirma.setWidget(ic)
+        dis.addWidget(kaydirma)
+        self.yenile()
+
+    # ------------------------------------------------------------------ kartlar
+    def _kart(self, baslik: str, alt: str = ""):
+        kart = QFrame()
+        kart.setObjectName("AyarKart")
+        yer = QVBoxLayout(kart)
+        yer.setContentsMargins(18, 14, 18, 16)
+        yer.setSpacing(10)
+        b = QLabel(baslik)
+        b.setStyleSheet("font-size:15px; font-weight:700;")
+        yer.addWidget(b)
+        if alt:
+            a = QLabel(alt)
+            a.setWordWrap(True)
+            a.setStyleSheet(f"color:{R['metin2']};")
+            yer.addWidget(a)
+        return kart, yer
+
+    @staticmethod
+    def _tablo(sutunlar: list[str], germe: int = 0, yukseklik: int = 180) -> QTableWidget:
+        t = QTableWidget(0, len(sutunlar))
+        t.setHorizontalHeaderLabels(sutunlar)
+        t.horizontalHeader().setSectionResizeMode(germe, QHeaderView.Stretch)
+        t.verticalHeader().setVisible(False)
+        t.setSelectionBehavior(QAbstractItemView.SelectRows)
+        t.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        t.setShowGrid(False)
+        t.setAlternatingRowColors(True)
+        t.setMinimumHeight(yukseklik)
+        return t
+
+    def _model_karti(self) -> QWidget:
+        from PySide6.QtWidgets import QProgressBar
+        kart, yer = self._kart("Yerel dil modeli")
+        self.model_durum = QLabel()
+        self.model_durum.setWordWrap(True)
+        yer.addWidget(self.model_durum)
+        self.model_tablosu = self._tablo(["Model", "Görev", "Boyut", "Bu bilgisayar", "Durum"], 0, 200)
+        yer.addWidget(self.model_tablosu)
+        satir = QHBoxLayout()
+        onerilen = QPushButton("  Önerilenleri kur")
+        onerilen.setObjectName("Birincil")
+        onerilen.setIcon(ikon("indir", "#FFFFFF", 16))
+        onerilen.clicked.connect(self._onerilenleri_kur)
+        kur = QPushButton("Seçiliyi kur")
+        kur.clicked.connect(lambda: self.kur_istendi.emit(self._secili_kimlikler()))
+        kullan = QPushButton("Kullan")
+        kullan.clicked.connect(lambda: [self.kullan_istendi.emit(k) for k in self._secili_kimlikler()[:1]])
+        sil = QPushButton("Sil")
+        sil.clicked.connect(lambda: [self.sil_istendi.emit(k) for k in self._secili_kimlikler()[:1]])
+        for d in (onerilen, kur, kullan, sil):
+            satir.addWidget(d)
+        satir.addStretch(1)
+        yer.addLayout(satir)
+        self.indirme_cubugu = QProgressBar()
+        self.indirme_cubugu.setRange(0, 1000)
+        self.indirme_cubugu.setTextVisible(False)
+        self.indirme_cubugu.setFixedHeight(8)
+        self.indirme_cubugu.hide()
+        yer.addWidget(self.indirme_cubugu)
+        alt = QHBoxLayout()
+        self.indirme_metni = QLabel()
+        self.indirme_metni.setObjectName("Ikincil")
+        alt.addWidget(self.indirme_metni, 1)
+        self.indirme_durdur = QPushButton("Durdur")
+        self.indirme_durdur.hide()
+        self.indirme_durdur.clicked.connect(self.durdur_istendi.emit)
+        alt.addWidget(self.indirme_durdur)
+        yer.addLayout(alt)
+        f = QFormLayout()
+        self.ortak = QLineEdit(self.s.ayarlar.al("yz.ortak_klasor", ""))
+        self.ortak.setPlaceholderText(r"\\sunucu\ortak\AkilHocasi\modeller (internet yoksa model dosyaları buradan alınır)")
+        self.ayna = QLineEdit(self.s.ayarlar.al("yz.ayna", ""))
+        self.ayna.setPlaceholderText("https://... (kurum içi model aynası; boşsa Hugging Face)")
+        f.addRow("Ortak model klasörü", self.ortak)
+        f.addRow("Model aynası", self.ayna)
+        yer.addLayout(f)
+        kaydet = QPushButton("Kaynak ayarlarını kaydet")
+        kaydet.clicked.connect(self._kaynaklari_kaydet)
+        yer.addWidget(kaydet, 0, Qt.AlignLeft)
+        return kart
+
+    def _cekirdek_karti(self) -> QWidget:
+        from ..cekirdek.ilkeler import CEKIRDEK_SURUMU, ILKELER
+        from ..cekirdek.yordamlar import YORDAMLAR
+        kart, yer = self._kart(f"Çekirdek (sürüm {CEKIRDEK_SURUMU})",
+                               f"{len(ILKELER)} temel ilke ve {len(YORDAMLAR)} yordam. İlkeler öğrenmeyle değişmez; "
+                               "yordamların ayarları yalnızca izinli aralıkta ve gelişim kapısından geçerek değişir.")
+        liste = QLabel("<br>".join(f"<b>{n}. {html.escape(i.ad)}:</b> {html.escape(i.ilke)}"
+                                   for n, i in enumerate(ILKELER, 1)))
+        liste.setWordWrap(True)
+        liste.setTextFormat(Qt.RichText)
+        yer.addWidget(liste)
+        d = QPushButton("  Çekirdek El Kitabı (ilkeler, iş akışları, yordamlar)")
+        d.setIcon(ikon("dosya", R["metin"], 16))
+        d.clicked.connect(self._el_kitabi)
+        yer.addWidget(d, 0, Qt.AlignLeft)
+        return kart
+
+    def _karne_karti(self) -> QWidget:
+        kart, yer = self._kart("İlke karnesi", "Son sınavda her ilkenin notu (1,00 en iyi). Hiçbir ilkenin notunu "
+                                               "düşüren değişiklik benimsenmez.")
+        self.karne_ozet = QLabel()
+        self.karne_ozet.setWordWrap(True)
+        yer.addWidget(self.karne_ozet)
+        self.karne_tablosu = self._tablo(["İlke", "Not", "Ölçülen"], 0, 260)
+        yer.addWidget(self.karne_tablosu)
+        return kart
+
+    def _gelisim_karti(self) -> QWidget:
+        kart, yer = self._kart("Kendini geliştirme", "Bilgisayar boştayken: anlam dizini, kendi çalışma soruları, "
+                                                     "hatalardan dersler, yordam ayarı denemeleri ve model yarışı.")
+        satir = QHBoxLayout()
+        self.gelisim_durum = QLabel()
+        self.gelisim_durum.setWordWrap(True)
+        satir.addWidget(self.gelisim_durum, 1)
+        g = QPushButton("  Şimdi kendini geliştir")
+        g.setObjectName("Birincil")
+        g.setIcon(ikon("yenile", "#FFFFFF", 16))
+        g.clicked.connect(self.gelistir_istendi.emit)
+        satir.addWidget(g)
+        yer.addLayout(satir)
+        self.gelisim_turu = SegmentSecici([("gecmis", "Gelişim geçmişi"), ("dersler", "Dersler"),
+                                           ("ayarlar", "Yordam ayarları")], "gecmis")
+        self.gelisim_turu.degisti.connect(lambda _: self._gelisim_tablosu_yenile())
+        yer.addWidget(self.gelisim_turu, 0, Qt.AlignLeft)
+        self.gelisim_tablosu = self._tablo(["Zaman", "Tür", "Konu", "Karar", "Gerekçe"], 2, 240)
+        yer.addWidget(self.gelisim_tablosu)
+        return kart
+
+    # ------------------------------------------------------------------ yenileme
+    def yenile(self) -> None:
+        self.model_durumu_yaz(self.s.yz.durum())
+        self._karne_yenile()
+        self._gelisim_tablosu_yenile()
+
+    def model_durumu_yaz(self, d: dict) -> None:
+        don = d.get("donanim", {})
+        satirlar = []
+        if d.get("hazir"):
+            olcum = d.get("olcum") or {}
+            satirlar.append(f"<span style='color:{R['yesil']};'><b>Hazır:</b></span> {html.escape(d.get('model_adi', ''))}"
+                            + (f" · kısa cevap süresi {olcum['sure_sn']} sn" if olcum.get("sure_sn") else ""))
+        elif not d.get("sunucu_var"):
+            satirlar.append(f"<span style='color:{R['sari']};'>Model sunucusu (llama-server) bulunamadı; "
+                            "program alıntıya dayalı modda çalışıyor.</span>")
+        elif not d.get("sohbet"):
+            satirlar.append(f"<span style='color:{R['sari']};'><b>Dil modeli kurulu değil.</b></span> "
+                            "\"Önerilenleri kur\" ile bu bilgisayara uygun model indirilir.")
+        else:
+            satirlar.append("Model başlatılıyor…")
+        a_hazir, a_toplam = d.get("anlam_ilerleme", (0, 0))
+        if d.get("anlam_calisiyor"):
+            satirlar.append(f"Anlam araması: {a_hazir:,}/{a_toplam:,} madde dizinlendi".replace(",", "."))
+        satirlar.append(f"Bilgisayar: {don.get('bellek_gb', '?')} GB bellek, {don.get('cekirdek', '?')} mantıksal çekirdek"
+                        + (" · pilde" if don.get("prizde") is False else ""))
+        if d.get("son_hata"):
+            satirlar.append(f"<span style='color:{R['kirmizi']};'>{html.escape(d['son_hata'])}</span>")
+        self.model_durum.setText("<br>".join(satirlar))
+        kurulu = {m["kimlik"]: m for m in self.s.yz.kurulu()}
+        secili = {t: (d.get(t) or {}).get("kimlik") for t in ("sohbet", "anlam")}
+        bellek = don.get("bellek_gb", 0) or 0
+        modeller = sorted(self.s.yz.katalog.modeller.values(), key=lambda m: (m.tur != "sohbet", -m.oncelik))
+        self._model_kimlikleri = [m.kimlik for m in modeller]
+        self.model_tablosu.setRowCount(len(modeller))
+        for i, m in enumerate(modeller):
+            uygun = "Uygun" if m.en_az_bellek_gb <= bellek else f"En az {m.en_az_bellek_gb:g} GB bellek"
+            if d.get("onerilen", {}).get(m.tur) == m.kimlik:
+                uygun = "Önerilen"
+            durum = ("Kullanılıyor" if secili.get(m.tur) == m.kimlik else "Kurulu" if m.kimlik in kurulu else
+                     "Aday (yarışta denenir)" if m.aday else "—")
+            for j, metin in enumerate((m.ad + (f" — {m.aciklama}" if m.aciklama else ""),
+                                       "Danışma" if m.tur == "sohbet" else "Anlam araması",
+                                       f"{m.yaklasik_gb:g} GB", uygun, durum)):
+                self.model_tablosu.setItem(i, j, QTableWidgetItem(metin))
+
+    def indirme_durumu(self, alinan_mb: float, toplam_mb: float, metin: str) -> None:
+        self.indirme_cubugu.show()
+        self.indirme_durdur.show()
+        if toplam_mb:
+            self.indirme_cubugu.setValue(int(1000 * alinan_mb / toplam_mb))
+        self.indirme_metni.setText(f"{metin} — {alinan_mb / 1024:.2f} / {toplam_mb / 1024:.2f} GB" if toplam_mb else metin)
+
+    def indirme_bitti(self, mesaj: str) -> None:
+        self.indirme_cubugu.hide()
+        self.indirme_durdur.hide()
+        self.indirme_metni.setText(mesaj)
+
+    def _karne_yenile(self) -> None:
+        from ..cekirdek.ilkeler import ILKELER
+        gecmis = self.s.strateji.karne_gecmisi(2)
+        if not gecmis:
+            self.karne_ozet.setText("Henüz sınav yapılmadı. Altın soru seti yüklendiğinde ya da program kendi "
+                                    "çalışma sorularını ürettiğinde ilk karne çıkar.")
+            self.karne_tablosu.setRowCount(0)
+            return
+        son = gecmis[0]
+        onceki = gecmis[1] if len(gecmis) > 1 else None
+        self.karne_ozet.setText(f"{_tarih(son['zaman'])} · {son.get('toplam', 0)} soru · başarı "
+                                f"<b>%{round(100 * son.get('basari', 0))}</b> · kritik hata {son.get('kritik', 0)} · "
+                                f"ilke ortalaması {son.get('ortalama', 0):.2f}")
+        self.karne_tablosu.setRowCount(len(ILKELER))
+        for i, ilke in enumerate(ILKELER):
+            notu = son.get("notlar", {}).get(ilke.kod)
+            olculen = son.get("ornek", {}).get(ilke.kod, 0)
+            fark = ""
+            if onceki and notu is not None and onceki.get("notlar", {}).get(ilke.kod) is not None:
+                d = notu - onceki["notlar"][ilke.kod]
+                fark = f" ({'+' if d >= 0 else ''}{d:.2f})" if abs(d) >= 0.005 else ""
+            for j, metin in enumerate((ilke.ad, f"{notu:.2f}{fark}" if notu is not None and olculen else "—",
+                                       str(olculen))):
+                self.karne_tablosu.setItem(i, j, QTableWidgetItem(metin))
+
+    def _gelisim_tablosu_yenile(self) -> None:
+        tur = self.gelisim_turu.secili
+        t = self.gelisim_tablosu
+        if tur == "dersler":
+            satirlar = [(_tarih(d["olusturma"]), d["yordam"], d["metin"], d["durum"], d["gerekce"] or "")
+                        for d in self.s.dersler.tumu()[:200]]
+            basliklar = ["Zaman", "Yordam", "Ders", "Durum", "Gerekçe"]
+        elif tur == "ayarlar":
+            satirlar = [("", a["yordam_adi"], a["aciklama"], str(a["deger"]),
+                         {"varsayilan": "varsayılan", "ogrenme": "öğrenildi", "kullanici": "kullanıcı"}.get(a["kaynak"], a["kaynak"]))
+                        for a in self.s.strateji.tumu()]
+            basliklar = ["", "Yordam", "Ayar", "Değer", "Kaynak"]
+        else:
+            turler = {"strateji": "Yordam ayarı", "ders": "Ders", "model": "Model", "geri_alma": "Geri alma"}
+            satirlar = [(_tarih(g["zaman"]), turler.get(g["tur"], g["tur"]), g["konu"], g["karar"], g["gerekce"])
+                        for g in self.s.strateji.gelisim_gecmisi(200)]
+            basliklar = ["Zaman", "Tür", "Konu", "Karar", "Gerekçe"]
+        t.setHorizontalHeaderLabels(basliklar)
+        t.setRowCount(len(satirlar))
+        for i, satir in enumerate(satirlar):
+            for j, metin in enumerate(satir):
+                t.setItem(i, j, QTableWidgetItem(str(metin)))
+
+    def gelisim_durumu_yaz(self, metin: str) -> None:
+        self.gelisim_durum.setText(metin)
+
+    # ------------------------------------------------------------------ eylemler
+    def _secili_kimlikler(self) -> list[str]:
+        satirlar = sorted({i.row() for i in self.model_tablosu.selectedIndexes()})
+        return [self._model_kimlikleri[r] for r in satirlar if 0 <= r < len(getattr(self, "_model_kimlikleri", []))]
+
+    def _onerilenleri_kur(self) -> None:
+        self.kur_istendi.emit([m.kimlik for m in self.s.yz.eksik_kurulum()])
+
+    def _kaynaklari_kaydet(self) -> None:
+        self.s.ayarlar.ayarla("yz.ortak_klasor", self.ortak.text().strip())
+        self.s.ayarlar.ayarla("yz.ayna", self.ayna.text().strip())
+        self.s.ayarlar.kaydet()
+        from ..yz.indirici import ModelIndirici
+        self.s.yz.indirici = ModelIndirici(self.s.yz.model_klasoru(), self.ayna.text().strip(), self.ortak.text().strip())
+        self.indirme_metni.setText("Model kaynak ayarları kaydedildi.")
+
+    def _el_kitabi(self) -> None:
+        from PySide6.QtWidgets import QDialog, QTextBrowser
+
+        from ..cekirdek.yordamlar import el_kitabi_md
+        p = QDialog(self)
+        p.setWindowTitle("Akıl Hocası — Çekirdek El Kitabı")
+        p.resize(860, 760)
+        v = QVBoxLayout(p)
+        t = QTextBrowser()
+        t.setMarkdown(el_kitabi_md())
+        v.addWidget(t)
+        p.exec()

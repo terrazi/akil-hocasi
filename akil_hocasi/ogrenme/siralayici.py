@@ -149,6 +149,15 @@ class OgrenenSiralayici:
                 dogru = set(json.loads(r["beklenen_dayanak"] or "[]"))
                 if dogru:
                     gruplar.append((r["soru"], dogru, "test"))
+        # 4) Programın kendi ürettiği ve doğruladığı sorular (yalnız eğitim payı; sınav payı ayrı kalır)
+        try:
+            for r in self.k.db.execute("SELECT soru, dayanak FROM yz_sentetik WHERE durum='dogrulandi'"
+                                       " AND kullanim='egitim' ORDER BY id DESC LIMIT 800"):
+                dogru = set(json.loads(r["dayanak"] or "[]"))
+                if dogru:
+                    gruplar.append((r["soru"], dogru, bolum(r["soru"])))
+        except Exception:  # noqa: BLE001 - sentetik tablo henüz yoksa
+            pass
         return gruplar
 
     def _adaylar(self, sorgu: str, dogru: set[str]) -> list[tuple[Pasaj, int]]:

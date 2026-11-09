@@ -31,12 +31,13 @@ def altin_sonucu(cevap, beklenen_dayanak: list[str], beklenen_ifade: str) -> tup
 
 
 def altin_seti_olc(hat, kutuphane, model_adi: str = "") -> dict:
-    sonuc = {"toplam": 0, "gecen": 0, "kritik": 0, "kalanlar": []}
+    sonuc = {"toplam": 0, "gecen": 0, "kritik": 0, "model_kendi": 0, "kalanlar": []}
     for r in kutuphane.db.execute("SELECT * FROM ogr_altin").fetchall():
         c = hat.cevapla(r["soru"], "derin", kayit=False)
         gecti, kritik = altin_sonucu(c, json.loads(r["beklenen_dayanak"] or "[]"), r["beklenen_ifade"] or "")
         sonuc["toplam"] += 1
         sonuc["gecen"] += int(gecti)
+        sonuc["model_kendi"] += int(gecti and not (c.denetim or {}).get("alintiya_donus"))
         sonuc["kritik"] += int(kritik)
         if not gecti:
             sonuc["kalanlar"].append(r["soru"])

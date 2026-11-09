@@ -16,13 +16,14 @@ from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainW
 from .. import UYGULAMA_ADI
 from ..answer.modeller import Cevap, Durum
 from ..crawler.zamanlayici import GOREVLER
-from .calisanlar import AdayModelCalisani, ModelYukleyici, OgrenmeCalisani, TaramaCalisani
+from .calisanlar import (AdayModelCalisani, AnlamCalisani, ModelIndirmeCalisani, OgrenmeCalisani, TaramaCalisani,
+                         YZBaslatici, ZekaCalisani)
 from .danisma import DanismaSayfasi
 from .hizli_yakala import CanliMetinPenceresi, YakalamaKatmani
 from .ikonlar import ikon, logo_pixmap
 from .kisayol import GenelKisayol, bosta_kalma_sn
 from .sayfalar import (AyarlarSayfasi, BelgeDeposuSayfasi, KaynakHavuzuSayfasi, NelerDegistiSayfasi,
-                       YakindaSayfasi, YaziHazirlamaSayfasi)
+                       YakindaSayfasi, YaziHazirlamaSayfasi, ZekaSayfasi)
 from .tema import R
 
 log = logging.getLogger("akilhocasi")
@@ -150,6 +151,10 @@ class AnaPencere(QMainWindow):
         self._takip: TakipCalisani | None = None
         self._ogrenme: OgrenmeCalisani | None = None
         self._aday: AdayModelCalisani | None = None
+        self._yz_baslatici: YZBaslatici | None = None
+        self._indirme: ModelIndirmeCalisani | None = None
+        self._anlam_calisani: AnlamCalisani | None = None
+        self._zeka: ZekaCalisani | None = None
         self._pencereler: list[QWidget] = []
         self._son_pano_bildirim = 0.0
         self._gozlem_sunucusu = None
@@ -197,7 +202,7 @@ class AnaPencere(QMainWindow):
         serit.setFixedWidth(84)
         yer = QVBoxLayout(serit)
         yer.setContentsMargins(10, 16, 10, 14)
-        yer.setSpacing(6)
+        yer.setSpacing(4)
         logo = QLabel()
         logo.setPixmap(logo_pixmap(44))
         logo.setAlignment(Qt.AlignCenter)
@@ -219,7 +224,7 @@ class AnaPencere(QMainWindow):
             d.setText(metin)
             d.setToolTip(ipucu)
             d.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            d.setFixedSize(64, 58)
+            d.setFixedSize(64, 54)
             d.setCursor(Qt.PointingHandCursor)
             if sayfa:
                 d.setCheckable(True)
@@ -236,6 +241,7 @@ class AnaPencere(QMainWindow):
             ("depo", "depo", "Depo", "Belge Deposu"),
             ("havuz", "havuz", "Kaynaklar", "Kaynak Havuzu: gömülü tarayıcı ve tarayıcı eklentisi"),
             ("degisti", "degisti", "Değişenler", "Neler değişti"),
+            ("zeka", "isik", "Zekâ", "Yapay zekâ ve çekirdek: model, ilkeler, kendini geliştirme"),
         ):
             d = dugme(anahtar, ik, metin, ipucu, sayfa=(anahtar != "yakala"))
             yer.addWidget(d, 0, Qt.AlignHCenter)
@@ -286,8 +292,15 @@ class AnaPencere(QMainWindow):
         self.havuz.durdur_istendi.connect(lambda: s.motor.durdur())
         self.havuz.ayarlar_degisti.connect(self._gozlem_kur)
         s.motor.bildir = self._gozlem_koprusu.motor.emit
+        self.zeka = ZekaSayfasi(s)
+        self.zeka.kur_istendi.connect(self._model_kur)
+        self.zeka.kullan_istendi.connect(self._model_kullan)
+        self.zeka.sil_istendi.connect(self._model_sil)
+        self.zeka.durdur_istendi.connect(lambda: self._indirme and self._indirme.durdur.set())
+        self.zeka.gelistir_istendi.connect(lambda: self.kendini_gelistir(elle=True))
         self.sayfalar = {"danisma": self.danisma, "yazi": self.yazi, "hesap": hesap, "kontrol": kontrol,
-                         "depo": self.depo_sayfa, "havuz": self.havuz, "degisti": self.degisti, "ayarlar": self.ayarlar_sayfa}
+                         "depo": self.depo_sayfa, "havuz": self.havuz, "degisti": self.degisti, "zeka": self.zeka,
+                         "ayarlar": self.ayarlar_sayfa}
         for anahtar, sayfa in self.sayfalar.items():
             self.yigin.addWidget(sayfa)
             self.dugmeler[anahtar].clicked.connect(lambda _=False, a=anahtar: self._sayfa(a))
@@ -298,6 +311,8 @@ class AnaPencere(QMainWindow):
         self.yigin.setCurrentWidget(self.sayfalar[anahtar])
         if anahtar == "depo":
             self.depo_sayfa.yenile()
+        elif anahtar == "zeka":
+            self.zeka.yenile()
         elif anahtar == "degisti":
             self.degisti.yenile()
             self.rozet.hide()
@@ -353,20 +368,113 @@ class AnaPencere(QMainWindow):
             self._bildirim("Panoda ekran görüntüsü var", "Metnini almak için tıklayın.",
                            lambda: self.goruntu_ac(QGuiApplication.clipboard().image()))
 
-    def _model_yukle(self) -> None:
-        yol = self.s.ayarlar.al("llm.model_yolu", "")
-        if not yol:
-            self.durum.model.setText("Alıntıya dayalı mod (model yok)")
+    def _model_yukle(self, degistir: str = "") -> None:
+        """Seçili yerel modelleri (dil + anlam) arka planda başlatır; zaten çalışanlara dokunmaz."""
+        if self._yz_baslatici and self._yz_baslatici.isRunning():
             return
-        self.durum.model.setText("Model yükleniyor…")
-        self._yukleyici = ModelYukleyici(yol, self.s.ayarlar.al("llm.baglam", 8192),
-                                         self.s.ayarlar.al("llm.is_parcacigi", 0), self)
-        self._yukleyici.bitti.connect(self._model_hazir)
-        self._yukleyici.start()
+        self.durum.model.setText("Model başlatılıyor…")
+        self._yz_baslatici = YZBaslatici(self.s.yz, degistir, self)
+        self._yz_baslatici.ilerleme.connect(lambda m: self.durum.model.setText(m[:60]))
+        self._yz_baslatici.bitti.connect(self._model_hazir)
+        self._yz_baslatici.start()
 
-    def _model_hazir(self, model) -> None:
-        self.s.hat.model = model
-        self.durum.model.setText(f"Model: {model.ad}" if model.hazir else "Model yüklenemedi; alıntıya dayalı mod")
+    def _model_hazir(self, durum: dict) -> None:
+        yz = self.s.yz
+        self.s.hat.model = yz.model
+        self.s.hat.anlam = yz.anlam
+        if yz.model.hazir:
+            olcum = durum.get("olcum") or {}
+            self.durum.model.setText(f"Model: {yz.model.ad}" + (f" · {olcum['sure_sn']} sn" if olcum.get("sure_sn") else ""))
+        else:
+            self.durum.model.setText("Alıntıya dayalı mod (dil modeli yok)")
+        self.zeka.model_durumu_yaz(durum)
+        if durum.get("son_hata"):
+            log.warning("YZ: %s", durum["son_hata"])
+        self._anlam_dizinle()
+        QTimer.singleShot(1500, self._model_kurulumu_oner)
+
+    def _model_kurulumu_oner(self) -> None:
+        """İlk açılışta: bu bilgisayara uygun model kurulu değilse bir kez sorar (kurulum sihirbazı gibi)."""
+        yz, ayar = self.s.yz, self.s.ayarlar
+        if ayar.al("yz.kurulum_soruldu", False) or (self._indirme and self._indirme.isRunning()):
+            return
+        from PySide6.QtWidgets import QApplication
+        if QApplication.platformName() in ("offscreen", "minimal") or not yz.durum().get("sunucu_var"):
+            return
+        eksik = yz.eksik_kurulum()
+        if not eksik:
+            return
+        ayar.ayarla("yz.kurulum_soruldu", True)
+        ayar.kaydet()
+        toplam = sum(m.yaklasik_gb for m in eksik)
+        liste = "\n".join(f"  • {m.ad} (~{m.yaklasik_gb:g} GB)" for m in eksik)
+        kutu = QMessageBox(QMessageBox.Question, UYGULAMA_ADI,
+                           "Akıl Hocası'nın soruları anlayıp gerekçeli cevap ve resmî yazı taslağı hazırlayabilmesi için "
+                           "bu bilgisayara uygun yerel dil modeli kurulmalı:\n\n" + liste +
+                           f"\n\nToplam yaklaşık {toplam:g} GB tek seferlik indirme. Modeller bu bilgisayarda çalışır; "
+                           "sorularınız ve belgeleriniz dışarı gönderilmez. İndirme arka planda sürer, program bu sırada "
+                           "alıntıya dayalı modda kullanılabilir.\n\nŞimdi kurulsun mu?",
+                           QMessageBox.Yes | QMessageBox.No, self)
+        evet = kutu.button(QMessageBox.Yes)
+        evet.setText("Kur")
+        kutu.button(QMessageBox.No).setText("Daha sonra (Zekâ ekranından)")
+        kutu.finished.connect(lambda _: kutu.clickedButton() == evet and self._model_kur([m.kimlik for m in eksik]))
+        kutu.open()
+
+    def _model_kur(self, kimlikler: list) -> None:
+        if not kimlikler:
+            self.zeka.indirme_bitti("Bu bilgisayar için önerilen modeller zaten kurulu. Başka bir model için tablodan seçin.")
+            return
+        if self._indirme and self._indirme.isRunning():
+            return
+        self._indirme = ModelIndirmeCalisani(self.s.yz, list(kimlikler), self)
+        self._indirme.ilerleme.connect(self.zeka.indirme_durumu)
+        self._indirme.ilerleme.connect(
+            lambda a, b, _m: self.durum.model.setText(f"Model indiriliyor %{int(100 * a / b)}" if b else "Model indiriliyor"))
+        self._indirme.bitti.connect(self._model_kuruldu)
+        self._indirme.start()
+
+    def _model_kuruldu(self, sonuc: dict) -> None:
+        self.zeka.indirme_bitti(sonuc.get("mesaj", ""))
+        self._bildirim("Model kurulumu", sonuc.get("mesaj", "")[:200])
+        self.zeka.yenile()
+        self._model_yukle()
+
+    def _model_kullan(self, kimlik: str) -> None:
+        if not any(m["kimlik"] == kimlik for m in self.s.yz.kurulu()):
+            self.zeka.indirme_bitti("Bu model kurulu değil; önce \"Seçiliyi kur\" ile indirin.")
+            return
+        self._model_yukle(degistir=kimlik)
+
+    def _model_sil(self, kimlik: str) -> None:
+        if not any(m["kimlik"] == kimlik for m in self.s.yz.kurulu()):
+            return
+        if QMessageBox.question(self, UYGULAMA_ADI, "Model dosyası bu bilgisayardan silinsin mi?") != QMessageBox.Yes:
+            return
+        from ..yz.sunucu import ModelHatasi
+        try:
+            self.s.yz.sil(kimlik)
+            self.zeka.indirme_bitti("Model silindi.")
+        except ModelHatasi as e:
+            self.zeka.indirme_bitti(str(e))
+        self.zeka.yenile()
+
+    def _anlam_dizinle(self) -> None:
+        """Anlam dizinini küçük partilerle tamamlar (yeni maddeler geldikçe; kullanıcı soru sorarken bekler)."""
+        if not self.s.yz.anlam.hazir or (self._anlam_calisani and self._anlam_calisani.isRunning()):
+            return
+        hazir, toplam = self.s.yz.anlam.ilerleme()
+        if hazir >= toplam:
+            return
+        self._anlam_calisani = AnlamCalisani(self.s.yz, 256, self)
+        self._anlam_calisani.bitti.connect(self._anlam_partisi_bitti)
+        self._anlam_calisani.start()
+
+    def _anlam_partisi_bitti(self, islenen: int) -> None:
+        if self.yigin.currentWidget() is self.zeka:
+            self.zeka.model_durumu_yaz(self.s.yz.durum())
+        if islenen and bosta_kalma_sn() > 60:
+            QTimer.singleShot(2_000, self._anlam_dizinle)
 
     # ================================================================== Hızlı Yakala
     def hizli_yakala(self) -> None:
@@ -472,6 +580,8 @@ class AnaPencere(QMainWindow):
     # ================================================================== güncelleme
     def _zamanlayici_tik(self) -> None:
         self._durumu_guncelle()
+        if bosta_kalma_sn() > 120:
+            self._anlam_dizinle()
         if self._tarama and self._tarama.isRunning():
             return
         z = self.s.zamanlayici
@@ -544,6 +654,38 @@ class AnaPencere(QMainWindow):
         self.durum.calisiyor(False, "Öğrenme tamamlandı")
         if self.yigin.currentWidget() is self.degisti:
             self.degisti.yenile()
+        if self.s.ayarlar.al("yz.kendini_gelistir", True) and self.s.hat.model.hazir:
+            self.kendini_gelistir()
+
+    # ================================================================== kendini geliştirme
+    def kendini_gelistir(self, elle: bool = False) -> None:
+        """Anlam dizini, çalışma soruları, hatalardan dersler, gelişim kapısı ve model yarışı (arka planda)."""
+        if self._zeka and self._zeka.isRunning():
+            if elle:
+                self.zeka.gelisim_durumu_yaz("Kendini geliştirme zaten çalışıyor.")
+            return
+        if not self.s.hat.model.hazir:
+            self.zeka.gelisim_durumu_yaz("Kendini geliştirme için dil modeli gerekli. Önce modeli kurun.")
+            return
+        if self._anlam_calisani and self._anlam_calisani.isRunning():
+            self._anlam_calisani.durdur.set()
+        sure = float(self.s.ayarlar.al("yz.gelisim_suresi_dk", 45))
+        self.durum.calisiyor(True, "Kendini geliştirme")
+        self.zeka.gelisim_durumu_yaz(f"Çalışıyor (en çok {sure:g} dakika)…")
+        self._zeka = ZekaCalisani(self.s, sure, self)
+        self._zeka.ilerleme.connect(self.durum.etkinlik_yaz)
+        self._zeka.ilerleme.connect(self.zeka.gelisim_durumu_yaz)
+        self._zeka.bitti.connect(self._zeka_bitti)
+        self._zeka.start()
+
+    def _zeka_bitti(self, rapor: list) -> None:
+        for satir in rapor:
+            log.info("Kendini geliştirme: %s", satir)
+        self.durum.calisiyor(False, "Kendini geliştirme tamamlandı")
+        self.s.hat.model = self.s.yz.model
+        ozet = "; ".join(str(r) for r in rapor[-4:])
+        self.zeka.gelisim_durumu_yaz(f"Son çalışma {datetime.now():%d.%m.%Y %H:%M}: {ozet}" if ozet else "Tamamlandı.")
+        self.zeka.yenile()
 
     def _aday_model_dene(self, yol: str) -> None:
         if self._aday and self._aday.isRunning():
@@ -557,9 +699,8 @@ class AnaPencere(QMainWindow):
     def _aday_sonucu(self, karar: dict) -> None:
         self.durum.calisiyor(False, "")
         if karar.get("devreye_al"):
+            self.s.yz.dis_modeli_benimse(karar["model"], karar.get("sunucu"), self._aday_yolu)
             self.s.hat.model = karar["model"]
-            self.s.ayarlar.ayarla("llm.model_yolu", self._aday_yolu)
-            self.s.ayarlar.kaydet()
             self.durum.model.setText(f"Model: {karar['model'].ad}")
         ayrinti = ""
         if "eski" in karar and "yeni" in karar:
@@ -698,9 +839,14 @@ class AnaPencere(QMainWindow):
         self.s.dosya_kuyrugu.durdur()
         if self.s.tarayici:
             self.s.tarayici.durdur.set()
-        for t in (self._tarama, self._takip, self._ogrenme, self._aday):
+        for c in (self._indirme, self._anlam_calisani, self._zeka):
+            if c and c.isRunning():
+                c.durdur.set()
+        for t in (self._tarama, self._takip, self._ogrenme, self._aday, self._indirme, self._anlam_calisani, self._zeka,
+                  self._yz_baslatici):
             if t and t.isRunning():
                 t.wait(3000)
+        self.s.yz.durdur()
         self.kisayol.kaldir()
         self.tepsi.hide()
         from PySide6.QtWidgets import QApplication

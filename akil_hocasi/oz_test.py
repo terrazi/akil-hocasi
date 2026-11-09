@@ -61,6 +61,13 @@ def calistir(rapor_yolu: str) -> int:
         return _bitir(rapor_yolu, satirlar, hatalar)
     pencere.show()
     app.processEvents()
+    # Yerel modeller arka planda başlar; arayüz akışı modelsiz (belirlenimci) sınanır, model ayrıca uçtan uca sınanır
+    if pencere._yz_baslatici:
+        pencere._yz_baslatici.wait(600_000)
+        app.processEvents()
+    from .answer.llm import BosModel
+    gercek_model = s.hat.model
+    s.hat.model = BosModel()
 
     def sayfalar():
         for a in pencere.sayfalar:
@@ -94,6 +101,7 @@ def calistir(rapor_yolu: str) -> int:
         d = s.ogrenme.durum()
         return f"faydalı {d['faydali']}, örnek hafıza {d['ornek']}; " + " | ".join(rapor)[:160]
     adim("Öğrenme döngüsü", ogrenme)
+    s.hat.model = gercek_model
 
     def ocr():
         motorlar = [m.ad for m in s.ocr.motorlar]
@@ -212,10 +220,93 @@ def calistir(rapor_yolu: str) -> int:
 
     adim("Kaynak Havuzu sayfası", lambda: pencere.havuz.yenile() or "yenilendi")
 
+    def cekirdek():
+        import threading
+
+        from .cekirdek.ilkeler import CEKIRDEK_SURUMU, ILKELER, sistem_cekirdegi
+        from .cekirdek.yordamlar import IS_AKISLARI, YORDAMLAR, el_kitabi_md
+        if len(ILKELER) < 12 or len(YORDAMLAR) < 20 or "GÖREV:" not in sistem_cekirdegi("deneme"):
+            raise RuntimeError("çekirdek eksik yüklendi")
+        if len(el_kitabi_md()) < 5000:
+            raise RuntimeError("El Kitabı eksik")
+        # Sınama ayarları yalnız sınavı yürüten iş parçacığında geçerli olmalı
+        gorulen = []
+        with s.strateji.gecici({("secme", "sunulacak_kaynak"): 3}):
+            ic = s.strateji.deger("secme", "sunulacak_kaynak")
+            th = threading.Thread(target=lambda: gorulen.append(s.strateji.deger("secme", "sunulacak_kaynak")))
+            th.start()
+            th.join()
+        if ic != 3 or gorulen != [6]:
+            raise RuntimeError(f"geçici ayar yalıtımı bozuk: iç {ic}, diğer iş parçacığı {gorulen}")
+        return (f"sürüm {CEKIRDEK_SURUMU}: {len(ILKELER)} ilke, {len(YORDAMLAR)} yordam, {len(IS_AKISLARI)} iş akışı, "
+                f"{len(s.strateji.tumu())} ayar")
+    adim("Çekirdek (ilkeler, yordamlar, strateji)", cekirdek)
+
+    adim("Zekâ sayfası", lambda: pencere.zeka.yenile() or f"{pencere.zeka.model_tablosu.rowCount()} model listelendi")
+
+    def model_sunucusu():
+        from .yz.sunucu import sunucu_exe
+        exe = sunucu_exe(s.ayarlar.al("yz.sunucu_yolu", ""))
+        if not exe:
+            if getattr(sys, "frozen", False):
+                raise RuntimeError("llama-server pakette yok")
+            return "geliştirme ortamı (llama-server paketle gelir)"
+        import subprocess
+        c = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=60,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        surum = (c.stdout + c.stderr).strip().splitlines()
+        return f"{Path(exe).name}: {surum[0][:80] if surum else 'sürüm bilgisi yok'}"
+    adim("Yerel model sunucusu", model_sunucusu)
+
+    def yerel_model():
+        import time as _time
+
+        from .yz.sunucu import env_model_klasoru
+        if not env_model_klasoru():
+            return "atlandı (AKILHOCASI_MODELLER tanımlı değil)"
+        d = s.yz.baslat()
+        if not s.yz.model.hazir:
+            raise RuntimeError(f"dil modeli başlamadı: {d.get('son_hata')}")
+        if not s.yz.anlam.hazir:
+            raise RuntimeError(f"anlam modeli başlamadı: {d.get('son_hata')}")
+        s.hat.model, s.hat.anlam = s.yz.model, s.yz.anlam
+        from .yz import sunucu as _sunucu
+        if sys.platform == "win32" and _sunucu._IS_NESNESI is None:
+            raise RuntimeError("model sunucusu iş nesnesine bağlanamadı (program kapanınca sunucu açık kalabilir)")
+        islenen = s.yz.anlam.eksikleri_isle(2000)
+        bulunan = s.yz.anlam.ara("başvuru için tanınan süre ne kadar", 3)
+        oztest_id = s.kutuphane.db.execute(
+            "SELECT m.id FROM maddeler m JOIN belgeler b ON b.id=m.belge_id WHERE b.kimlik='OZTEST'").fetchone()[0]
+        if not bulunan or bulunan[0][0] != oztest_id:
+            raise RuntimeError(f"anlam araması öz test maddesini bulamadı: {bulunan}")
+        ham = s.yz.model.sohbet([{"role": "user", "content": "Türkiye'nin başkenti neresidir? JSON ver."}], max_tokens=60,
+                                json_sema={"type": "object", "properties": {"sehir": {"type": "string"}},
+                                           "required": ["sehir"]})
+        import json as _json
+        if "sehir" not in _json.loads(ham):
+            raise RuntimeError(f"yapılandırılmış çıktı bozuk: {ham[:120]}")
+        t0 = _time.monotonic()
+        c = s.hat.cevapla("Deneme hükmüne göre başvuru kaç gün içinde ve hangi formla yapılır?", "derin", kayit=False)
+        sure = _time.monotonic() - t0
+        if not c.dusunce:
+            raise RuntimeError("düşünce kaydı boş")
+        olcum = s.yz.model.hiz_olc()
+        from .yz.oz_gelisim import GeceZekaCalismasi
+        uretim = GeceZekaCalismasi(s, lambda _m: None).sentetik_uret(2, _time.monotonic() + 240)
+        if pencere._anlam_calisani:
+            pencere._anlam_calisani.durdur.set()
+            pencere._anlam_calisani.wait(60_000)
+        s.yz.durdur()
+        return (f"{s.yz.secili('sohbet')['ad']}: {islenen} madde vektörlendi, anlam araması doğru, JSON çıktı geçerli, "
+                f"cevap {sure:.0f} sn ({c.durum.value}, {len(c.kaynaklar)} kaynak, güven {c.guven or '-'}), "
+                f"kısa cevap {olcum.get('sure_sn', '?')} sn; çalışma sorusu üretimi: {uretim}")
+    adim("Yerel dil modeli (uçtan uca)", yerel_model)
+
     if pencere._gozlem_sunucusu:
         pencere._gozlem_sunucusu.durdur()
     s.motor.kapat()
     s.dosya_kuyrugu.durdur()
+    s.yz.durdur()
     pencere._cikiliyor = True
     pencere.kisayol.kaldir()
     pencere.tepsi.hide()

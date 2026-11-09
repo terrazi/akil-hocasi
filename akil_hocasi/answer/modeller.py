@@ -66,12 +66,21 @@ class Cevap:
     olay_id: int | None = None
     cevrimdisi: bool = False
     sure_sn: float = 0.0
+    # Çekirdek muhakeme bölümleri
+    cozumleme: dict = field(default_factory=dict)              # anlama yordamının çıktısı (olgular, statü, tarih)
+    netlestirme: list[str] = field(default_factory=list)       # cevabı değiştiren eksik bilgi soruları
+    uygulama: list[Cumle] = field(default_factory=list)        # olgu → kural → şart karşılaştırması → sonuç
+    degerlendirme: list[Cumle] = field(default_factory=list)   # etiketli yorum (yeni sayı/süre/madde içeremez)
+    guven: str = ""                                            # kesin | yoruma_acik | hukum_yok
+    dusunce: list[str] = field(default_factory=list)           # "Nasıl düşündüm" kaydı
+    denetim: dict = field(default_factory=dict)                # sınama sayaçları (karne için)
+    kullanilan_dersler: list[str] = field(default_factory=list)
 
     def kaynak(self, kid: str) -> Kaynak | None:
         return next((k for k in self.kaynaklar if k.kid == kid), None)
 
     def tum_cumleler(self) -> list[Cumle]:
-        return [*self.kisa_cevap, *self.adimlar, *self.dikkat, *self.somut_yol]
+        return [*self.kisa_cevap, *self.uygulama, *self.adimlar, *self.dikkat, *self.degerlendirme, *self.somut_yol]
 
     @property
     def son_kontrol(self) -> str:
@@ -80,7 +89,11 @@ class Cevap:
 
     def duz_metin(self) -> str:
         """Panoya kopyalama için düz metin."""
-        satirlar = [f"Soru: {self.soru}", f"Durum: {self.durum.value}", ""]
+        guven = {"kesin": "Kesin (kaynakta açık hüküm var)", "yoruma_acik": "Yoruma açık",
+                 "hukum_yok": "Doğrudan hüküm yok"}.get(self.guven, "")
+        satirlar = [f"Soru: {self.soru}", f"Durum: {self.durum.value}" + (f" · Güven: {guven}" if guven else ""), ""]
+        if self.netlestirme:
+            satirlar += ["Netleştirilmesi gereken:"] + [f"- {q}" for q in self.netlestirme] + [""]
 
         def ek(cumleler: list[Cumle], baslik: str, numarali: bool = False) -> None:
             if not cumleler:
@@ -94,8 +107,10 @@ class Cevap:
         ek(self.kisa_cevap, "Kısa cevap:")
         if self.acik_nokta:
             satirlar += ["Açık kalan nokta:", self.acik_nokta, ""]
+        ek(self.uygulama, "Gerekçe (kuralın duruma uygulanması):")
         ek(self.adimlar, "Adımlar:", numarali=True)
         ek(self.dikkat, "Dikkat:")
+        ek(self.degerlendirme, "Değerlendirme (Akıl Hocası'nın yorumu; kesin hüküm değildir):")
         ek(self.somut_yol, "Önerilen yol:")
         if self.kaynaklar:
             satirlar.append("Dayanak:")

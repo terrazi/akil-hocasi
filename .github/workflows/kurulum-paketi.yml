@@ -17,7 +17,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 75
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
 
@@ -25,8 +25,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Kurulum paketini oluştur (test → PyInstaller → öz test → Inno Setup)
+      # Öz testte gerçek llama-server ile uçtan uca sınama için küçük modeller (Qwen3.5 0.8B + Qwen3 Embedding 0.6B)
+      - name: Test modelleri önbelleği
+        uses: actions/cache@v4
+        with:
+          path: derleme/modeller
+          key: test-modelleri-${{ hashFiles('akil_hocasi/yz/katalog.py', 'paketleme/test_modelleri.py') }}
+
+      - name: Kurulum paketini oluştur (test → llama-server → PyInstaller → öz test → Inno Setup)
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./paketleme/paket_olustur.ps1
 
       - name: Öz test raporu

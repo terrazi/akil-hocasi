@@ -13,13 +13,14 @@ class CevapCalisani(QThread):
     bitti = Signal(object)
     hata = Signal(str)
 
-    def __init__(self, hat, soru: str, mod: str, parent=None):
+    def __init__(self, hat, soru: str, mod: str, parent=None, baglam=None):
         super().__init__(parent)
-        self.hat, self.soru, self.mod = hat, soru, mod
+        self.hat, self.soru, self.mod, self.baglam = hat, soru, mod, baglam
 
     def run(self) -> None:
         try:
-            cevap = self.hat.cevapla(self.soru, self.mod, ilerleme=lambda a, t, m: self.ilerleme.emit(a, t, m))
+            cevap = self.hat.cevapla(self.soru, self.mod, ilerleme=lambda a, t, m: self.ilerleme.emit(a, t, m),
+                                     baglam=self.baglam)
             self.bitti.emit(cevap)
         except Exception:
             self.hata.emit(traceback.format_exc(limit=3))
@@ -139,12 +140,106 @@ class AdayModelCalisani(QThread):
         self.s, self.yol = s, yol
 
     def run(self) -> None:
-        from ..answer.llm import model_yukle
         from ..ogrenme.egitim import modelleri_karsilastir
-        yeni = model_yukle(self.yol, self.s.ayarlar.al("llm.baglam", 8192))
+        yeni, sunucu = self.s.yz.dosyadan_model(self.yol)
         if not yeni.hazir:
             self.bitti.emit({"devreye_al": False, "neden": "Model yüklenemedi (llama.cpp veya dosya sorunu)"})
             return
-        karar = modelleri_karsilastir(self.s.hat, self.s.kutuphane, self.s.hat.model, yeni)
-        karar["model"] = yeni
+        try:
+            karar = modelleri_karsilastir(self.s.hat, self.s.kutuphane, self.s.hat.model, yeni)
+        except Exception as e:  # noqa: BLE001
+            karar = {"devreye_al": False, "neden": f"Karşılaştırma yapılamadı: {e}"}
+        if not karar.get("devreye_al") and sunucu:
+            sunucu.durdur()
+        karar["model"], karar["sunucu"] = yeni, sunucu
         self.bitti.emit(karar)
+
+
+class YZBaslatici(QThread):
+    """Seçili yerel modelleri (dil + anlam) arka planda başlatır ve hızı ölçer."""
+    ilerleme = Signal(str)
+    bitti = Signal(object)              # dict durum
+
+    def __init__(self, yz, degistir: str = "", parent=None):
+        super().__init__(parent)
+        self.yz, self.degistir = yz, degistir
+
+    def run(self) -> None:
+        try:
+            durum = (self.yz.model_degistir(self.degistir, self.ilerleme.emit) if self.degistir
+                     else self.yz.baslat(self.ilerleme.emit))
+        except Exception as e:  # noqa: BLE001 - kullanıcıya gösterilir
+            self.yz.son_hata = str(e)
+            durum = self.yz.durum()
+        if self.yz.model.hazir and hasattr(self.yz.model, "hiz_olc"):
+            try:
+                self.yz.model.hiz_olc()
+            except Exception:  # noqa: BLE001 - ölçüm başarısızsa model yine kullanılır
+                pass
+            durum = self.yz.durum()
+        self.bitti.emit(durum)
+
+
+class ModelIndirmeCalisani(QThread):
+    """Modelleri indirir ve doğrular (MB cinsinden ilerleme: 32 bitlik sinyal taşmasın)."""
+    ilerleme = Signal(float, float, str)
+    bitti = Signal(object)              # {"ok": bool, "mesaj": str}
+
+    def __init__(self, yz, kimlikler: list[str], parent=None):
+        super().__init__(parent)
+        import threading
+        self.yz, self.kimlikler = yz, kimlikler
+        self.durdur = threading.Event()
+
+    def run(self) -> None:
+        mesajlar, ok = [], True
+        for kimlik in self.kimlikler:
+            m = self.yz.katalog.getir(kimlik)
+            ad = m.ad if m else kimlik
+            try:
+                self.yz.indir(kimlik, lambda a, b, c, ad=ad: self.ilerleme.emit(a / 1e6, b / 1e6, f"{ad}: {c}"),
+                              self.durdur)
+                mesajlar.append(f"{ad} kuruldu")
+            except Exception as e:  # noqa: BLE001 - kullanıcıya gösterilir
+                ok = False
+                mesajlar.append(f"{ad}: {e}")
+                if self.durdur.is_set():
+                    break
+        self.bitti.emit({"ok": ok, "mesaj": "; ".join(mesajlar)})
+
+
+class AnlamCalisani(QThread):
+    """Anlam dizinini küçük partilerle tamamlar (boşta ya da yeni belge geldiğinde)."""
+    bitti = Signal(int)
+
+    def __init__(self, yz, parti: int = 128, parent=None):
+        super().__init__(parent)
+        import threading
+        self.yz, self.parti = yz, parti
+        self.durdur = threading.Event()
+
+    def run(self) -> None:
+        try:
+            self.bitti.emit(self.yz.anlam.eksikleri_isle(self.parti, self.durdur))
+        except Exception:  # noqa: BLE001
+            self.bitti.emit(0)
+
+
+class ZekaCalisani(QThread):
+    """Gece YZ çalışması: anlam dizini, sentetik sorular, dersler, gelişim döngüsü, model yarışı."""
+    ilerleme = Signal(str)
+    bitti = Signal(object)              # list[str]
+
+    def __init__(self, s, sure_dk: float, parent=None):
+        super().__init__(parent)
+        import threading
+        self.s, self.sure_dk = s, sure_dk
+        self.durdur = threading.Event()
+
+    def run(self) -> None:
+        from ..yz.oz_gelisim import GeceZekaCalismasi
+        try:
+            rapor = GeceZekaCalismasi(self.s, self.ilerleme.emit).calistir(self.sure_dk, self.durdur)
+        except Exception as e:  # noqa: BLE001
+            rapor = [f"Kendini geliştirme: HATA {e}"]
+        self.bitti.emit(rapor)

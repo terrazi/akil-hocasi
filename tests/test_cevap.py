@@ -111,3 +111,42 @@ def test_hat_modelin_uydurmasi_ayiklanir(kutuphane):
     metinler = " ".join(x.metin for x in c.kisa_cevap)
     assert "6 ay" in metinler and "36" not in metinler
     assert c.model_kullanildi
+
+
+def test_capraz_kontrol_sayi_parcasini_kabul_etmez(kutuphane):
+    """Kaynakta yalnızca "TOGÜ.FRM.396" varken "6 ay" uydurması geçmemeli (sayı sınırı denetimi)."""
+    from akil_hocasi.answer.modeller import Cevap, Cumle, Kaynak
+    p = kutuphane.madde_getir("TOGÜ.USE.999", "2")
+    c = Cevap(soru="Aylıksız izin ne kadar?", kaynaklar=[Kaynak("K1", p)],
+              kisa_cevap=[Cumle("Aylıksız izin en fazla 6 ay verilir.", ["K1"]),
+                          Cumle("Talep TOGÜ.FRM.396 formu ile yapılır.", ["K1"])])
+    DogrulamaMotoru(kutuphane, BIRINCIL).dogrula(c)
+    metin = " ".join(x.metin for x in c.kisa_cevap)
+    assert "6 ay" not in metin and "FRM.396" in metin
+    assert c.denetim["dogruluk_cikarilan"] == 1
+
+
+class _HukumuKaciranModel:
+    """Doğrudan hüküm varken 'hüküm yok' diyen (küçük modellerde görülen) sahte model."""
+    hazir = True
+    ad = "kaciran"
+
+    def sohbet(self, mesajlar, max_tokens=900, sicaklik=0.2, json_mod=False, json_sema=None, dusunme=False, akis=None):
+        import json
+        sistem = mesajlar[0]["content"]
+        if "çözümle" in sistem:
+            return json.dumps({"konu": "aylıksız izin", "niyet": "bilgi", "personel_turu": "657/4-A memur",
+                               "olgular": [], "alt_sorular": [], "terimler": ["aylıksız izin"], "eksik": [],
+                               "zorluk": "kolay"})
+        if "denetçi olarak" in sistem:
+            return json.dumps({"karar": "uygun", "sorunlar": []})
+        return json.dumps({"dogrudan_cevap": False, "guven": "hukum_yok", "acik_nokta": "bulamadım",
+                           "kisa_cevap": [], "uygulama": [], "adimlar": [], "dikkat": [], "degerlendirme": []})
+
+
+def test_model_hukmu_kacirirsa_alintiya_donulur(kutuphane):
+    hat = CevapHatti(kutuphane, DogrulamaMotoru(kutuphane, BIRINCIL), model=_HukumuKaciranModel())
+    c = hat.cevapla("Memura isteği üzerine en fazla ne kadar aylıksız izin verilebilir?", "derin", kayit=False)
+    assert c.durum == Durum.DOGRULANDI
+    assert any("6 ay" in x.metin for x in c.kisa_cevap)
+    assert any("alıntıya dayalı" in s for s in c.dusunce)

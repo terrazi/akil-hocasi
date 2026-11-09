@@ -46,6 +46,9 @@ class Servisler:
     gozlem: GozlemDegerlendirici
     dosya_kuyrugu: object
     motor: object
+    yz: object
+    strateji: object
+    dersler: object
 
 
 _cevrimici_onbellek = {"zaman": 0.0, "durum": True}
@@ -112,9 +115,17 @@ def servisleri_kur() -> Servisler:
     ogrenme.duzeltici = duzeltici
     duzeltici.ogrenilmis.update(ogrenme.ocr_duzeltmeleri())
     siralayici = OgrenenSiralayici(kutuphane, ogrenme)
+    # Çekirdek: yordam ayarları ve ders hafızası; YZ: yerel dil ve anlam modelleri
+    from .cekirdek.dersler import DersHafizasi
+    from .cekirdek.strateji import StratejiDeposu
+    from .yz.yonetici import YZYoneticisi
+    strateji = StratejiDeposu(kutuphane)
+    dersler = DersHafizasi(kutuphane)
+    yz = YZYoneticisi(yollar, ayarlar, kutuphane)
     hat = CevapHatti(kutuphane, DogrulamaMotoru(kutuphane, BIRINCIL), BosModel(), cevrimici=saglayicilar,
                      depo=depo, cevrimici_mi=cevrimici_mi,
-                     ogrenme=ogrenme if ayarlar.al("ogrenme.acik", True) else None, siralayici=siralayici)
+                     ogrenme=ogrenme if ayarlar.al("ogrenme.acik", True) else None, siralayici=siralayici,
+                     strateji=strateji, dersler=dersler, anlam=yz.anlam)
     # Kaynak havuzu: eklenti gözlemleri ve gömülü tarayıcı motoru aynı değerlendiriciye ve dosya kuyruğuna akar
     from .gozlem.dosya_kuyrugu import DosyaKuyrugu
     from .gozlem.eslestirme import yerel_mesajlasma_kaydet
@@ -130,7 +141,7 @@ def servisleri_kur() -> Servisler:
         log.warning("Eklenti köprüsü kaydedilemedi: %s", e)
     return Servisler(yollar, ayarlar, kutuphane, depo, tarayici, hat, ocr,
                      Zamanlayici(ayarlar.al("guncelleme", {}), kimlik), kimlik, ogrenme, siralayici,
-                     gozlem, dosya_kuyrugu, motor)
+                     gozlem, dosya_kuyrugu, motor, yz, strateji, dersler)
 
 
 _MUTEX = None

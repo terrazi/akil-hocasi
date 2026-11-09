@@ -24,8 +24,6 @@ $vpy = Join-Path $venv "Scripts\python.exe"
 & $vpy -m pip install --upgrade pip --quiet
 & $vpy -m pip install -r requirements.txt -r requirements-istege-bagli.txt pyinstaller pytest --quiet
 Kontrol "Paket kurulumu başarısız"
-& $vpy -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --quiet
-if ($LASTEXITCODE -ne 0) { Write-Warning "llama-cpp-python kurulamadı; program alıntıya dayalı modda paketlenecek." }
 
 Adim "2/7 Testler"
 if (-not $TestleriAtla) { & $vpy -m pytest -q tests; Kontrol "Testler başarısız" }
@@ -55,6 +53,35 @@ if (-not $TesseractAtla -and -not (Test-Path (Join-Path $tess "tesseract.exe")))
     }
 }
 
+Adim "3b/7 Yerel model sunucusu (llama.cpp llama-server, CPU) ve test modelleri"
+$llama = Join-Path $Derleme "llama"
+if (-not (Test-Path (Join-Path $llama "llama-server.exe"))) {
+    $basliklar = @{ "User-Agent" = "akilhocasi-derleme"; "Accept" = "application/vnd.github+json" }
+    if ($env:GITHUB_TOKEN) { $basliklar["Authorization"] = "Bearer $env:GITHUB_TOKEN" }
+    $yayin = Invoke-RestMethod "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" -Headers $basliklar
+    $varlik = $yayin.assets | Where-Object { $_.name -match "bin-win-cpu-x64\.zip$" } | Select-Object -First 1
+    if (-not $varlik) { $varlik = $yayin.assets | Where-Object { $_.name -match "bin-win-avx2-x64\.zip$" } | Select-Object -First 1 }
+    if (-not $varlik) { throw "llama.cpp Windows CPU paketi bulunamadı ($($yayin.tag_name))" }
+    $zip = Join-Path $Derleme "llama.zip"
+    $gecici = Join-Path $Derleme "llama_acik"
+    Remove-Item $gecici -Recurse -Force -ErrorAction SilentlyContinue
+    Invoke-WebRequest $varlik.browser_download_url -OutFile $zip
+    Expand-Archive $zip -DestinationPath $gecici -Force
+    $sunucu = Get-ChildItem $gecici -Recurse -Filter "llama-server.exe" | Select-Object -First 1
+    if (-not $sunucu) { throw "llama-server.exe zip içinde yok" }
+    New-Item -ItemType Directory -Force $llama | Out-Null
+    # Yalnızca sunucu ve DLL'ler pakete girer (diğer araçlar gereksiz yer kaplar)
+    Copy-Item $sunucu.FullName $llama -Force
+    Get-ChildItem $sunucu.DirectoryName -Filter "*.dll" | Copy-Item -Destination $llama -Force
+    Get-ChildItem $sunucu.DirectoryName -Filter "LICENSE*" | Copy-Item -Destination $llama -Force -ErrorAction SilentlyContinue
+    Set-Content (Join-Path $llama "SURUM.txt") "llama.cpp $($yayin.tag_name) ($($varlik.name))" -Encoding UTF8
+    Remove-Item $zip, $gecici -Recurse -Force -ErrorAction SilentlyContinue
+}
+Get-Content (Join-Path $llama "SURUM.txt") -ErrorAction SilentlyContinue | Write-Host
+& (Join-Path $llama "llama-server.exe") --version 2>&1 | Select-Object -First 3 | Write-Host
+$modeller = Join-Path $Derleme "modeller"
+& $vpy paketleme\test_modelleri.py $modeller
+
 Adim "4/7 PyInstaller (Python gömülü uygulama klasörü)"
 Remove-Item (Join-Path $Derleme "dist"), (Join-Path $Derleme "work"), (Join-Path $Derleme "kopru"), (Join-Path $Derleme "work_kopru") -Recurse -Force -ErrorAction SilentlyContinue
 & $vpy -m PyInstaller paketleme\akilhocasi.spec --noconfirm --distpath (Join-Path $Derleme "dist") --workpath (Join-Path $Derleme "work")
@@ -68,11 +95,15 @@ Adim "5/7 Paket öz testi (gerçek Qt, ekransız)"
 $exe = Join-Path $Derleme "dist\AkilHocasi\AkilHocasi.exe"
 $rapor = Join-Path $Derleme "oz_test_raporu.txt"
 Remove-Item $rapor -ErrorAction SilentlyContinue
+# Küçük test modelleri varsa öz test gerçek llama-server ile uçtan uca sınama da yapar
+if (Get-ChildItem $modeller -Filter "*.gguf" -ErrorAction SilentlyContinue) { $env:AKILHOCASI_MODELLER = $modeller }
 $p = Start-Process -FilePath $exe -ArgumentList "--oz-test=`"$rapor`"" -PassThru
-if (-not $p.WaitForExit(300000)) {
+if (-not $p.WaitForExit(1200000)) {
     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-    throw "Paket öz testi 5 dakikada bitmedi (program bir hata penceresinde beklemiş olabilir)"
+    Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    throw "Paket öz testi 20 dakikada bitmedi (program bir hata penceresinde beklemiş olabilir)"
 }
+Remove-Item Env:AKILHOCASI_MODELLER -ErrorAction SilentlyContinue
 if (Test-Path $rapor) { Get-Content $rapor -Encoding UTF8 | Write-Host } else { Write-Warning "Öz test raporu oluşmadı" }
 if ($p.ExitCode -ne 0) { throw "Paket öz testi başarısız (çıkış kodu $($p.ExitCode))" }
 

@@ -1,7 +1,9 @@
-"""Kural tabanlı doğrulama motoru (yapay zekadan bağımsız).
+"""Kural tabanlı doğrulama motoru (yapay zekadan bağımsız) — çekirdeğin "Sınama" yordamı.
 
-Yedi test: Kaynak, Güncellik, Alıntı, Çapraz kontrol, Hiyerarşi, Biçim, Somutluk.
-Geçemeyen cümle silinir veya etiketlenir; kaynaksız cümle kullanıcıya ulaşmaz.
+Testler: Kaynak, Güncellik, Alıntı, Çapraz kontrol, Hiyerarşi, Biçim (kişisel veri maskeleme dahil), Somutluk,
+Değerlendirme (yorum cümlesi kaynaklarda olmayan sayı/süre/madde içeremez), Güven (güven düzeyi tutarlılığı).
+Geçemeyen cümle silinir ya da etiketlenir; kaynaksız kesin bilgi kullanıcıya ulaşmaz. Çıkarılan her cümle
+nedeniyle birlikte cevap.denetim'e yazılır (eleştiri, düzeltme ve ders yordamları bunu kullanır).
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ import re
 from urllib.parse import urlparse
 
 from ..core import dogrulayicilar as d
+from ..core.maskeleme import metni_maskele
 from ..core.turkce import alinti_normalle, katla
 from ..library.db import Kutuphane
 from .modeller import Cevap, Cumle, Durum, Uyari
@@ -50,14 +53,32 @@ class DogrulamaMotoru:
     # ------------------------------------------------------------------ ana giriş
     def dogrula(self, cevap: Cevap) -> Cevap:
         celiski = False
-        for bolum in ("kisa_cevap", "adimlar", "dikkat"):
+        denetim = {"uretilen": 0, "dogruluk_cikarilan": 0, "somutluk_cikarilan": 0, "cikarilanlar": []}
+        for bolum in ("kisa_cevap", "uygulama", "adimlar", "dikkat", "degerlendirme"):
             kalan: list[Cumle] = []
             for c in getattr(cevap, bolum):
-                ok, cel = self._cumle_dogrula(cevap, c)
+                if c.tur != "yonlendirme":
+                    denetim["uretilen"] += 1
+                c.metin = metni_maskele(c.metin)                  # Biçim/gizlilik: kişisel veri maskelenir
+                once = len(cevap.uyarilar)
+                if bolum == "degerlendirme":
+                    ok, cel = self._degerlendirme_dogrula(cevap, c), False
+                else:
+                    ok, cel = self._cumle_dogrula(cevap, c)
                 celiski = celiski or cel
                 if ok:
                     kalan.append(c)
+                else:
+                    yeni = cevap.uyarilar[once:]
+                    test = yeni[-1].test if yeni else "Kaynak"
+                    if test == "Somutluk":
+                        denetim["somutluk_cikarilan"] += 1
+                    else:
+                        denetim["dogruluk_cikarilan"] += 1
+                    denetim["cikarilanlar"].append({"bolum": bolum, "metin": c.metin, "test": test,
+                                                    "neden": yeni[-1].mesaj if yeni else "kaynaksız"})
             setattr(cevap, bolum, kalan)
+        cevap.denetim = denetim
 
         self._somutluk(cevap)
         self._hiyerarsi(cevap)
@@ -75,7 +96,40 @@ class DogrulamaMotoru:
             cevap.durum = Durum.CELISKILI
         else:
             cevap.durum = Durum.DOGRULANDI
+        self._guven(cevap)
         return cevap
+
+    def _guven(self, cevap: Cevap) -> None:
+        """Güven testi: güven düzeyi doğrulama sonucuyla tutarlı olmalı."""
+        if cevap.durum == Durum.HUKUM_YOK:
+            if cevap.guven and cevap.guven != "hukum_yok":
+                cevap.uyarilar.append(Uyari("Güven", "Doğrudan hüküm kalmadığı için güven düzeyi düşürüldü", "bilgi"))
+            cevap.guven = "hukum_yok"
+        elif cevap.durum == Durum.CELISKILI:
+            cevap.guven = "yoruma_acik"
+        elif not cevap.guven or cevap.guven == "hukum_yok":
+            cevap.guven = "yoruma_acik" if cevap.degerlendirme and not cevap.uygulama else "kesin"
+
+    def _degerlendirme_dogrula(self, cevap: Cevap, c: Cumle) -> bool:
+        """Yorum cümlesi: kaynak şart değil; ama alıntı, kaynaklarda olmayan sayı ve boş kalıp içeremez."""
+        if _ALINTI.search(c.metin):
+            cevap.uyarilar.append(Uyari("Değerlendirme", f"Yorumda alıntı olamaz; cümle çıkarıldı: {c.metin[:60]}", "bilgi"))
+            return False
+        tum = " ".join(k.pasaj.metin + " " + k.pasaj.belge_kimlik + " " + k.pasaj.madde_no for k in cevap.kaynaklar)
+        tum += " " + cevap.soru
+        sayilar = {_sayi_normal(x) for x in _SAYI.findall(tum)}
+        for x in _SAYI.findall(c.metin):
+            if _sayi_normal(x) not in sayilar and x not in tum:
+                cevap.uyarilar.append(Uyari("Değerlendirme", f"Yorumda kaynakta olmayan “{x}” değeri; cümle çıkarıldı", "hata"))
+                return False
+        k_metin = katla(c.metin)
+        for kalip in AFAKI_KALIPLAR:
+            if katla(kalip) in k_metin:
+                cevap.uyarilar.append(Uyari("Somutluk", f"Genel kalıp içeren yorum çıkarıldı: “{kalip}”", "bilgi"))
+                return False
+        c.kaynaklar = [k for k in c.kaynaklar if cevap.kaynak(k) is not None]
+        c.tur = "degerlendirme"
+        return True
 
     # ------------------------------------------------------------------ cümle testleri
     def _cumle_dogrula(self, cevap: Cevap, c: Cumle) -> tuple[bool, bool]:
@@ -130,8 +184,9 @@ class DogrulamaMotoru:
             sn = _sayi_normal(s)
             if sn in kaynak_sayilari:
                 continue
-            # ekonomik kod parçaları gibi noktalı ifadeler: birleşik metinde ham haliyle aranır
-            if s in birlesik:
+            # ekonomik kod parçaları gibi noktalı ifadeler: birleşik metinde ham hâliyle, sayı sınırıyla aranır
+            # ("6" değeri "396" içinde geçiyor diye doğrulanmış sayılmaz)
+            if "." in s and re.search(rf"(?<![\d.]){re.escape(s)}(?![\d])", birlesik):
                 continue
             cevap.uyarilar.append(Uyari("Çapraz kontrol", f"“{s}” değeri kaynakta doğrulanamadı; cümle çıkarıldı", "hata"))
             return False, False

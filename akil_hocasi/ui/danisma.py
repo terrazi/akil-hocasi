@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QFileDialog, QFrame, QGridLayout, QHBoxLayout, QL
                                QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
 from ..answer.modeller import Cevap
+from ..cekirdek.muhakeme import SohbetBaglami
 from .bilesenler import OtomatikMetin, SegmentSecici, _alfali, golge, ikon_dugme
 from .calisanlar import CevapCalisani
 from .cevap_karti import CevapKarti
@@ -181,6 +182,7 @@ class IlerlemeKarti(QFrame):
 class Besteci(QFrame):
     gonder = Signal(str, str)              # soru, mod
     hizli_yakala = Signal()
+    yeni_konu = Signal()
     goruntu = Signal(QImage)
     belge = Signal(str)
 
@@ -208,6 +210,14 @@ class Besteci(QFrame):
         self.mod = SegmentSecici([("hizli", "Hızlı"), ("derin", "Derin araştırma")], "derin")
         self.mod.setToolTip("Derin araştırma: atıf zinciri, canlı resmî arama ve emsaller dahil yedi basamak")
         alt.addWidget(self.mod)
+        self.yeni_konu_dugme = QPushButton("Yeni konu")
+        self.yeni_konu_dugme.setObjectName("Hayalet")
+        self.yeni_konu_dugme.setIcon(ikon("arti", R["metin2"], 16))
+        self.yeni_konu_dugme.setToolTip("Konuşmayı yeni konu olarak başlat: önceki sorular yeni cevabı etkilemez")
+        self.yeni_konu_dugme.setCursor(Qt.PointingHandCursor)
+        self.yeni_konu_dugme.clicked.connect(self.yeni_konu.emit)
+        self.yeni_konu_dugme.hide()
+        alt.addWidget(self.yeni_konu_dugme)
         alt.addStretch(1)
         ipucu = QLabel("Enter gönderir · Shift+Enter yeni satır · Ctrl+V ile görüntü yapıştırın")
         ipucu.setObjectName("Soluk")
@@ -257,6 +267,7 @@ class DanismaSayfasi(QWidget):
         self.calisan: CevapCalisani | None = None
         self.ilerleme_karti: IlerlemeKarti | None = None
         self.son_cevap: Cevap | None = None
+        self.baglam = SohbetBaglami()          # aynı konuşmadaki önceki turlar: devam soruları doğru anlaşılır
 
         yatay = QHBoxLayout(self)
         yatay.setContentsMargins(0, 0, 0, 0)
@@ -288,6 +299,7 @@ class DanismaSayfasi(QWidget):
         self.besteci.hizli_yakala.connect(self.hizli_yakala_istendi.emit)
         self.besteci.goruntu.connect(self.goruntu_geldi.emit)
         self.besteci.belge.connect(self.belge_geldi.emit)
+        self.besteci.yeni_konu.connect(self.yeni_konu)
         dikey.addWidget(_ortala(self.besteci))
         yatay.addWidget(orta, 1)
 
@@ -316,7 +328,7 @@ class DanismaSayfasi(QWidget):
         self.ilerleme_karti = IlerlemeKarti()
         self._ekle(self.ilerleme_karti)
         self.besteci.mesgul(True)
-        self.calisan = CevapCalisani(self.hat, soru, mod, self)
+        self.calisan = CevapCalisani(self.hat, soru, mod, self, baglam=SohbetBaglami(list(self.baglam.turlar)))
         self.calisan.ilerleme.connect(self.ilerleme_karti.guncelle)
         self.calisan.bitti.connect(self._cevap_geldi)
         self.calisan.hata.connect(self._hata)
@@ -325,6 +337,21 @@ class DanismaSayfasi(QWidget):
     def soruyu_doldur(self, metin: str) -> None:
         self.besteci.giris.setPlainText(metin)
         self.besteci.giris.setFocus()
+        imlec = self.besteci.giris.textCursor()
+        imlec.movePosition(imlec.MoveOperation.End)
+        self.besteci.giris.setTextCursor(imlec)
+
+    def yeni_konu(self) -> None:
+        self.baglam = SohbetBaglami()
+        self.besteci.yeni_konu_dugme.hide()
+        cizgi = QLabel("— Yeni konu —")
+        cizgi.setAlignment(Qt.AlignCenter)
+        cizgi.setObjectName("Soluk")
+        self._ekle(cizgi)
+
+    def _netlestir(self, cevap: Cevap, soru: str) -> None:
+        """Netleştirme sorusuna tıklandı: önceki soru + ek bilgi alanı besteciye gelir, kullanıcı yalnız cevabı yazar."""
+        self.soruyu_doldur(f"{cevap.soru}\nEk bilgi — {soru} ")
 
     def _ilerlemeyi_kaldir(self) -> None:
         if self.ilerleme_karti:
@@ -338,12 +365,16 @@ class DanismaSayfasi(QWidget):
         self.son_cevap = cevap
         kart = CevapKarti(cevap)
         kart.kaynak_secildi.connect(lambda kid, c=cevap: self._kaynak_goster(c, kid))
+        kart.netlestir.connect(lambda q, c=cevap: self._netlestir(c, q))
         kart.belge_acildi.connect(self.belge_ac.emit)
         kart.yaziya_donustur.connect(self.yaziya_gonder.emit)
         kart.geri_bildirim.connect(self.geri_bildirim.emit)
         kart.faydali.connect(self.faydali.emit)
         self._ekle(kart)
         self.besteci.mesgul(False)
+        ozet = " ".join(c.metin for c in (cevap.kisa_cevap or cevap.dikkat)[:3]) or cevap.durum.value
+        self.baglam.ekle(cevap.soru, ozet, cevap.cozumleme)
+        self.besteci.yeni_konu_dugme.show()
         if cevap.kaynaklar:
             self.panel.goster(cevap)
             self.panel.setVisible(True)

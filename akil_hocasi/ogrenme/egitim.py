@@ -95,17 +95,17 @@ def yerel_egitimi_calistir(ayarlar, veri_yolu: Path, temel_model: str, cikti_yol
 
 def modelleri_karsilastir(hat, kutuphane, eski_model, yeni_model) -> dict:
     """Altın sette iki modeli sırayla dener. 'devreye_al' anahtarı kararı verir."""
-    asil = hat.model
-    try:
-        hat.model = eski_model
-        eski = altin_seti_olc(hat, kutuphane, getattr(eski_model, "ad", "eski"))
-        hat.model = yeni_model
-        yeni = altin_seti_olc(hat, kutuphane, getattr(yeni_model, "ad", "yeni"))
-    finally:
-        hat.model = asil
+    import copy
+    h = copy.copy(hat)                     # kopya hat: kullanıcının o sıradaki soruları adaya gitmez
+    h.model = eski_model
+    eski = altin_seti_olc(h, kutuphane, getattr(eski_model, "ad", "eski"))
+    h.model = yeni_model
+    yeni = altin_seti_olc(h, kutuphane, getattr(yeni_model, "ad", "yeni"))
     if not yeni["toplam"]:
         return {"eski": eski, "yeni": yeni, "devreye_al": False, "neden": "altın soru seti yok"}
-    devreye = yeni["gecen"] > eski["gecen"] and yeni["kritik"] <= eski["kritik"]
+    # Önce doğru cevap sayısı; eşitse modelin alıntıya dönülmeden kendi başına doğru cevapladığı soru sayısı
+    daha_iyi = (yeni["gecen"], yeni.get("model_kendi", 0)) > (eski["gecen"], eski.get("model_kendi", 0))
+    devreye = daha_iyi and yeni["gecen"] >= eski["gecen"] and yeni["kritik"] <= eski["kritik"]
     neden = ("yeni model daha başarılı" if devreye else
              "yeni model daha başarılı değil veya kritik hatası fazla; eski model korunuyor")
     return {"eski": eski, "yeni": yeni, "devreye_al": devreye, "neden": neden}

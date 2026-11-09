@@ -38,6 +38,12 @@ tesseract = os.path.join(KOK, "derleme", "tesseract")
 if os.path.isdir(tesseract):
     datas.append((tesseract, "tesseract"))
 
+# Yerel model sunucusu: llama.cpp llama-server (CPU) ve DLL'leri (derleme hattı derleme/llama içine koyar).
+# Model dosyaları (GGUF) pakete girmez: ilk açılışta bilgisayarın belleğine uygun olanı indirilir.
+llama = os.path.join(KOK, "derleme", "llama")
+if os.path.isdir(llama):
+    datas.append((llama, "llama"))
+
 # Akıl Hocası Gözlemci tarayıcı eklentisi (Chrome/Edge, MV3); ilk açılışta veri klasörüne kopyalanır
 datas.append((os.path.join(KOK, "gozlemci_eklenti"), "gozlemci_eklenti"))
 

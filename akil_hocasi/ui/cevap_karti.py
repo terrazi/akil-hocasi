@@ -1,4 +1,5 @@
-"""Cevap kartı: durum rozeti, kısa cevap (atıflı), adımlar, belgeler, dikkat, dayanak, eylemler."""
+"""Cevap kartı: durum ve güven, netleştirme, kısa cevap (atıflı), gerekçe, adımlar, belgeler, dikkat, değerlendirme,
+dayanak, "Nasıl düşündüm" ve eylemler."""
 
 from __future__ import annotations
 
@@ -15,6 +16,10 @@ from .ikonlar import ikon
 from .tema import DURUM_RENK, KAYNAK_TURU_RENK, R
 
 DURUM_IKON = {Durum.DOGRULANDI: "onay", Durum.CELISKILI: "uyari", Durum.HUKUM_YOK: "bilgi"}
+GUVEN = {"kesin": ("Kesin", "Kaynakta soruyu doğrudan karşılayan açık hüküm var"),
+         "yoruma_acik": ("Yoruma açık", "Hüküm var ama duruma uygulanması yoruma açık; idarenin takdiri ya da "
+                                        "ek bilgi sonucu değiştirebilir"),
+         "hukum_yok": ("Doğrudan hüküm yok", "Konuyu doğrudan düzenleyen hüküm bulunamadı")}
 
 
 def _tarih(iso: str) -> str:
@@ -70,6 +75,7 @@ class _Bolum(QWidget):
 
 class CevapKarti(QFrame):
     kaynak_secildi = Signal(str)
+    netlestir = Signal(str)                 # netleştirme sorusu: besteciye "soru — cevabım: " olarak gelir
     belge_acildi = Signal(object)
     yaziya_donustur = Signal(object)
     geri_bildirim = Signal(object)
@@ -98,6 +104,13 @@ class CevapKarti(QFrame):
             Durum.HUKUM_YOK: "Konuyu doğrudan düzenleyen hüküm bulunamadı; en yakın bilgiler ve çözüm yolu verildi",
         }[cevap.durum])
         ust.addWidget(rozet)
+        if cevap.guven in GUVEN and cevap.guven != "hukum_yok":
+            g_ad, g_ipucu = GUVEN[cevap.guven]
+            g = QLabel(f"Güven: {g_ad}")
+            g.setToolTip(g_ipucu)
+            g_renk = R["yesil"] if cevap.guven == "kesin" else R["sari"]
+            g.setStyleSheet(f"color:{g_renk}; font-weight:600; padding:0 4px;")
+            ust.addWidget(g)
         for tur in dict.fromkeys(k.pasaj.kaynak_turu for k in cevap.kaynaklar):
             ust.addWidget(Cip(tur, KAYNAK_TURU_RENK.get(tur, R["ana"])))
         ust.addStretch(1)
@@ -113,12 +126,43 @@ class CevapKarti(QFrame):
                              "font-weight:600;")
             yer.addWidget(uy)
 
+        # ---- netleştirme: cevabı değiştiren eksik bilgi
+        if cevap.netlestirme:
+            kutu = QFrame()
+            kutu.setStyleSheet(f"QFrame {{ background:{R['ana_acik']}; border-radius:12px; }}")
+            kv = QVBoxLayout(kutu)
+            kv.setContentsMargins(12, 10, 12, 10)
+            kv.setSpacing(6)
+            b = QLabel("CEVABI NETLEŞTİRMEK İÇİN")
+            b.setObjectName("BolumBaslik")
+            b.setStyleSheet(f"color:{R['ana']};")
+            kv.addWidget(b)
+            a = QLabel("Aşağıdaki bilgi sonucu değiştirebilir. Birine tıklayıp cevabınızı yazın; değerlendirme "
+                       "bu bilgiyle yenilenir." + (" Şimdilik genel kurala göre cevap verildi." if cevap.kisa_cevap else ""))
+            a.setWordWrap(True)
+            a.setStyleSheet(f"color:{R['metin2']}; background:transparent;")
+            kv.addWidget(a)
+            for soru in cevap.netlestirme:
+                d = QPushButton(f"  {soru}")
+                d.setObjectName("Hayalet")
+                d.setIcon(ikon("danisma", R["ana"], 16))
+                d.setCursor(Qt.PointingHandCursor)
+                d.setStyleSheet(f"text-align:left; color:{R['ana']}; font-weight:600;")
+                d.clicked.connect(lambda _=False, q=soru: self.netlestir.emit(q))
+                kv.addWidget(d)
+            yer.addWidget(kutu)
+
         # ---- kısa cevap
         if cevap.kisa_cevap:
             yer.addWidget(_Bolum("Kısa cevap", "<br>".join(_cumle_html(c) for c in cevap.kisa_cevap),
                                  link_fn=self._link))
         if cevap.acik_nokta:
             yer.addWidget(_Bolum("Açık kalan nokta", html.escape(cevap.acik_nokta), R["gri"], R["gri_zemin"]))
+
+        # ---- gerekçe: kuralın duruma uygulanması (olgu → kural → şart → sonuç)
+        if cevap.uygulama:
+            yer.addWidget(_Bolum("Gerekçe", "<br>".join("• " + _cumle_html(c) for c in cevap.uygulama),
+                                 link_fn=self._link))
 
         # ---- adımlar
         if cevap.adimlar:
@@ -148,6 +192,10 @@ class CevapKarti(QFrame):
             baslik = "En yakın hükümler" if cevap.durum == Durum.HUKUM_YOK else "Dikkat"
             yer.addWidget(_Bolum(baslik, "<br>".join("• " + _cumle_html(c) for c in cevap.dikkat),
                                  R["sari"], R["sari_zemin"], link_fn=self._link))
+        if cevap.degerlendirme:
+            yer.addWidget(_Bolum("Değerlendirme — Akıl Hocası'nın yorumu, kesin hüküm değildir",
+                                 "<br>".join("• " + _cumle_html(c) for c in cevap.degerlendirme),
+                                 R["gri"], R["gri_zemin"], link_fn=self._link))
         if cevap.somut_yol:
             yer.addWidget(_Bolum("Önerilen yol", "<br>".join("→ " + html.escape(c.metin) for c in cevap.somut_yol),
                                  R["ana"], R["ana_acik"]))
@@ -183,7 +231,7 @@ class CevapKarti(QFrame):
             ("yazi", "Yazıya dönüştür", lambda: self.yaziya_donustur.emit(self.cevap)),
             ("panel", "Kaynakları göster", lambda: self.kaynak_secildi.emit(
                 self.cevap.kaynaklar[0].kid if self.cevap.kaynaklar else "")),
-            ("bilgi", "Doğrulama ayrıntıları", lambda: self.ayrinti.setVisible(not self.ayrinti.isVisible())),
+            ("isik", "Nasıl düşündüm", lambda: self.ayrinti.setVisible(not self.ayrinti.isVisible())),
         ):
             d = QPushButton(metin)
             d.setObjectName("Hayalet")
@@ -209,14 +257,37 @@ class CevapKarti(QFrame):
         yer.addLayout(alt)
 
     def _ayrinti_html(self) -> str:
-        satirlar = ["<b>Araştırma adımları</b>"] + [html.escape(s) for s in self.cevap.ilerleme]
+        c = self.cevap
+        satirlar = []
+        if c.dusunce:
+            satirlar.append("<b>Nasıl düşündüm</b>")
+            satirlar += [html.escape(s) for s in c.dusunce]
+        coz = c.cozumleme or {}
+        if coz:
+            olgular = "; ".join(coz.get("olgular") or []) or "—"
+            satirlar.append(f"<br><b>Durum çözümlemesi</b><br>Personel türü: {html.escape(str(coz.get('personel_turu', '—')))}"
+                            f" · Olay tarihi: {html.escape(str(coz.get('olay_tarihi') or 'belirtilmedi'))}"
+                            f" · Zorluk: {html.escape(str(coz.get('zorluk', '—')))}<br>Olgular: {html.escape(olgular)}")
+        if c.kullanilan_dersler:
+            satirlar.append("<br><b>Uygulanan yöntem dersleri</b>")
+            satirlar += ["• " + html.escape(d) for d in c.kullanilan_dersler]
+        den = c.denetim or {}
+        if den.get("uretilen"):
+            satirlar.append(f"<br><b>Sınama</b><br>Üretilen {den['uretilen']} cümleden "
+                            f"{den.get('dogruluk_cikarilan', 0)} doğruluk, {den.get('somutluk_cikarilan', 0)} somutluk "
+                            "testinde çıkarıldı.")
+            for x in den.get("cikarilanlar", [])[:6]:
+                satirlar.append(f"<span style='color:{R['kirmizi']};'>✕ {html.escape(x.get('test', ''))}:</span> "
+                                f"{html.escape(x.get('metin', '')[:140])} — {html.escape(x.get('neden', '')[:100])}")
+        satirlar.append("<br><b>Araştırma adımları</b>")
+        satirlar += [html.escape(s) for s in c.ilerleme]
         if self.cevap.uyarilar:
             satirlar.append("<br><b>Doğrulama motoru notları</b>")
             for u in self.cevap.uyarilar:
                 renk = {"hata": R["kirmizi"], "uyari": R["sari"]}.get(u.seviye, R["metin2"])
                 satirlar.append(f"<span style='color:{renk};'>● {html.escape(u.test)}:</span> {html.escape(u.mesaj)}")
         satirlar.append("<br>" + ("Dil modeli kullanıldı; tüm cümleler kural tabanlı testlerden geçti."
-                                  if self.cevap.model_kullanildi else
+                                  if self.cevap.model_kullanildi and not den.get("alintiya_donus") else
                                   "Alıntıya dayalı mod: cümleler doğrudan kaynak metinden alındı."))
         return "<br>".join(satirlar)
 
