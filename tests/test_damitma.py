@@ -168,3 +168,16 @@ def test_kisa_yaz_notu_yalniz_istekte():
     m = [{"role": "system", "content": "s"}, {"role": "user", "content": "soru"}]
     g = kisa_yaz_notu(m, 500)
     assert m[-1]["content"] == "soru" and "Uzunluk sınırı" in g[-1]["content"] and "1050 karakter" in g[-1]["content"]
+
+
+def test_dogrulanmis_taslak_ve_sik_sema():
+    from akil_hocasi.yz.damitma import _cumle_anahtari, dogrulanmis_taslak, sik_sema
+    v = {"dogrudan_cevap": True, "kisa_cevap": [{"metin": "Doğru cümle.", "kaynaklar": ["K1"]},
+                                                {"metin": "Uydurma  85 puan.", "kaynaklar": ["K1"]}],
+         "uygulama": [{"metin": "Şart: x — Bu durumda: y.", "kaynaklar": ["K1"]}], "guven": "kesin"}
+    temiz, toplam, atilan = dogrulanmis_taslak(v, {_cumle_anahtari("Uydurma 85 puan.")})
+    assert (toplam, atilan) == (3, 1) and [o["metin"] for o in temiz["kisa_cevap"]] == ["Doğru cümle."]
+    assert v["kisa_cevap"][1]["metin"].startswith("Uydurma")                     # asıl taslak değişmez
+    s = sik_sema({"type": "object", "properties": {"a": {"type": "array", "maxItems": 8}, "b": {"type": "array",
+                                                                                              "maxItems": 2}}})
+    assert s["properties"]["a"]["maxItems"] == 4 and s["properties"]["b"]["maxItems"] == 2

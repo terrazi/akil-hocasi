@@ -133,6 +133,8 @@ class OgretmenModeli:
         # Düşünürken dilbilgisi (JSON şeması) uygulanmaz: llama.cpp kısıtı düşünce bloğunun içine de uygular ve
         # model JSON'u düşüncenin içinde bırakır. Düşünen öğretmen JSON'u istemdeki tarife göre kendisi yazar.
         if json_sema and not dusun:
+            if gorev == "cozumleme" and self.kisa_yaz:
+                json_sema = sik_sema(json_sema)     # öğretmen dizileri dolduruyor ve 500 belirteçte kesiliyordu
             govde["response_format"] = {"type": "json_schema", "json_schema": {"name": "cikti", "schema": json_sema}}
         elif json_mod and not dusun:
             govde["response_format"] = {"type": "json_object"}
@@ -169,6 +171,18 @@ class OgretmenModeli:
 _JSON_SON = re.compile(r"\{.*\}", re.S)
 
 
+def sik_sema(sema):
+    """Öğretmene giden şemada uzun dizilerin üst sınırını yarıya indirir (çıktı yine asıl şemaya uyar)."""
+    if isinstance(sema, dict):
+        yeni = {a: sik_sema(d) for a, d in sema.items()}
+        if yeni.get("type") == "array" and isinstance(yeni.get("maxItems"), int) and yeni["maxItems"] >= 4:
+            yeni["maxItems"] = max(2, yeni["maxItems"] // 2)
+        return yeni
+    if isinstance(sema, list):
+        return [sik_sema(x) for x in sema]
+    return sema
+
+
 def kisa_yaz_notu(mesajlar: list[dict], max_tokens: int) -> list[dict]:
     """Yalnız öğretmene giden istemin sonuna uzunluk notu ekler (kayda ve eğitim örneğine girmez). Öğretmen
     ayrıntılı yazınca programın belirteç sınırında kesiliyordu; öğrenci de çalışırken aynı sınırla yazacak.
@@ -177,8 +191,8 @@ def kisa_yaz_notu(mesajlar: list[dict], max_tokens: int) -> list[dict]:
         return mesajlar
     karakter = int(max_tokens * 3 * 0.7)
     not_ = (f"\n\n[Uzunluk sınırı: cevabın tamamı en çok yaklaşık {karakter} karakter olsun. Dizilerde yalnız gerçekten "
-            "gerekli öğeleri ver; her öğe tek ve kısa bir cümle olsun. Kısalık için doğruluktan ve kaynak "
-            "göstermekten ödün verme.]")
+            "gerekli öğeleri ver; her öğe tek ve kısa bir cümle olsun. Sonuç alanını (ör. kisa_cevap) boş bırakma; "
+            "kısaltmayı ayrıntıdan yap. Kısalık için doğruluktan ve kaynak göstermekten ödün verme.]")
     son = dict(mesajlar[-1])
     son["content"] = str(son.get("content", "")) + not_
     return mesajlar[:-1] + [son]
@@ -193,6 +207,40 @@ def dusunceyi_ayir(metin: str) -> tuple[str, str]:
         once, _, metin = metin.rpartition("</think>")
         dusunce += once
     return metin.replace("<think>", "").strip(), dusunce
+
+
+_BOLUMLER = ("kisa_cevap", "uygulama", "adimlar", "dikkat", "degerlendirme")
+
+
+def _cumle_anahtari(metin: str) -> str:
+    from ..core.maskeleme import metni_maskele
+    return re.sub(r"\s+", " ", metni_maskele(str(metin).strip())).strip()
+
+
+def dogrulanmis_taslak(v: dict, cikan: set[str]) -> tuple[dict, int, int]:
+    """Taslaktan sınamada çıkarılan cümleleri atar. (ayıklanmış taslak, cümle sayısı, atılan) döner."""
+    yeni, toplam, atilan = dict(v), 0, 0
+    for b in _BOLUMLER:
+        ogeler = v.get(b)
+        if not isinstance(ogeler, list):
+            continue
+        kalan = []
+        for o in ogeler:
+            metin = o.get("metin", "") if isinstance(o, dict) else str(o)
+            if not str(metin).strip():
+                continue
+            toplam += 1
+            if _cumle_anahtari(metin) in cikan:
+                atilan += 1
+                continue
+            kalan.append(o)
+        yeni[b] = kalan
+    return yeni, toplam, atilan
+
+
+def _kaynak_satirlari(k: "Cagri") -> list[str]:
+    metin = "\n".join(str(m.get("content", "")) for m in k.mesajlar if m.get("role") == "user")
+    return re.findall(r"^\[K\d+\][^\n]*", metin, re.M)
 
 
 def _json_gecerli(metin: str) -> dict | None:
@@ -252,6 +300,28 @@ class Damitici:
         from .oz_gelisim import SEMA as SENTETIK_SEMA
         with s.kutuphane._kilit, s.kutuphane.db:
             s.kutuphane.db.executescript(SENTETIK_SEMA)
+        self._yerel = threading.local()
+        self._dogrulamayi_izle()
+
+    def _dogrulamayi_izle(self) -> None:
+        """Programın sınamasını sarar: bir soru işlenirken (iş parçacığına özgü) sınamada çıkarılan bütün cümleler
+        toplanır. Hat aynı cevabı birkaç kez sınar ve her seferinde denetim kaydını yeniler; öğretmenin hangi
+        cümlesinin geçmediği ancak böyle bilinir."""
+        d = getattr(self.s.hat, "dogrulama", None)
+        if d is None or getattr(d, "_damitma_izleniyor", False):
+            return
+        asil, yerel = d.dogrula, self._yerel
+
+        def izlenen(cevap):
+            sonuc = asil(cevap)
+            toplanan = getattr(yerel, "cikan", None)
+            if toplanan is not None:
+                toplanan.update(_cumle_anahtari(x.get("metin", ""))
+                                for x in (getattr(cevap, "denetim", None) or {}).get("cikarilanlar", []))
+            return sonuc
+
+        d.dogrula = izlenen
+        d._damitma_izleniyor = True
 
     # ------------------------------------------------------------------ kayıt
     def _islenenler(self) -> set[str]:
@@ -278,7 +348,11 @@ class Damitici:
 
     @staticmethod
     def _ornek(c: Cagri, bolum: str, soru_id: str) -> dict:
-        return {"gorev": c.gorev, "messages": c.mesajlar, "cevap": c.cevap, "json": c.json, "bolum": bolum,
+        cevap = c.cevap
+        v = _json_gecerli(cevap) if c.json else None
+        if v is not None:                    # JSON sıkıştırılır: öğrenci boşluksuz yazar, CPU'da daha az belirteç
+            cevap = json.dumps(v, ensure_ascii=False)
+        return {"gorev": c.gorev, "messages": c.mesajlar, "cevap": cevap, "json": c.json, "bolum": bolum,
                 "soru_id": soru_id}
 
     # ------------------------------------------------------------------ 1 çalışma soruları
@@ -330,6 +404,7 @@ class Damitici:
         """Bir soruyu programın danışma hattında öğretmenle cevaplar, çağrıları sınar ve kaydeder."""
         from ..ogrenme.degerlendirme import altin_sonucu
         bolum = bolum_sec(h["soru"])
+        self._yerel.cikan = set()
         try:
             with self.ogretmen.kayit() as kayit:
                 c = self.s.hat.cevapla(h["soru"], "derin", kayit=False)
@@ -338,6 +413,8 @@ class Damitici:
             log.warning("Soru işlenemedi: %s", e)
             self._yaz([], h["id"])
             return
+        finally:
+            cikan, self._yerel.cikan = self._yerel.cikan, None
         self.rapor.soru += 1
         sinav = {"soru": h["soru"], "beklenen_dayanak": h["dayanak"], "id": h["id"]} if bolum == "sinav" else None
         if bolum == "sinav":                          # sınav sorusunun hiçbir çağrısı eğitime girmez
@@ -350,9 +427,28 @@ class Damitici:
         bulunan = {f"{k.pasaj.belge_kimlik}/{k.pasaj.madde_no}" for k in c.kaynaklar} | {
             k.pasaj.belge_kimlik for k in c.kaynaklar}
         dayanak_yok = bool(h["dayanak"]) and not any(d in bulunan for d in h["dayanak"])
-        duzeltildi = any(k.gorev == "duzeltme" for k in kayit)
+        celiskili = c.durum.value == "Çelişkili"
         ornekler, hatalar = [], []
-        for k in kayit:
+        # Sentez ve düzeltme: öğretmenin cevabından sınamada çıkarılan cümleler atılır (kalan her cümle doğrulanmış);
+        # sonuç bölümü ayakta kalan ve cümlelerinin çoğu geçen cevap örnek olur. Sentez istemine, aynı kaynaklarla
+        # yazılmış en son geçerli düzeltme hedef olarak verilir (öğrenci düzeltilmiş cevabı doğrudan yazmayı öğrenir).
+        gecerli: dict[int, dict] = {}
+        for i, k in enumerate(kayit):
+            if k.gorev not in ("sentez", "duzeltme"):
+                continue
+            v = _json_gecerli(k.cevap)
+            if v is None:
+                continue
+            durust_yok = (dayanak_yok and v.get("guven") == "hukum_yok"
+                          and (v.get("dogrudan_cevap") is False or not v.get("kisa_cevap")))
+            temiz_v, toplam, atilan = dogrulanmis_taslak(v, cikan)
+            if durust_yok and not atilan:
+                gecerli[i] = v
+            elif (not dayanak_yok and not celiskili and v.get("dogrudan_cevap") is not False
+                  and temiz_v.get("kisa_cevap") and toplam and atilan <= 0.4 * toplam):
+                gecerli[i] = temiz_v
+        son_duzeltme = max((i for i in gecerli if kayit[i].gorev == "duzeltme"), default=None)
+        for i, k in enumerate(kayit):
             v = _json_gecerli(k.cevap) if k.json else None
             with self._yaz_kilit:
                 self.rapor.cagri_say(k, bool(k.json and v is None))
@@ -360,24 +456,36 @@ class Damitici:
                 self.rapor.say(self.rapor.atilan, f"{k.gorev}:bozuk")
                 self._atilan_yaz(k, "bozuk")
                 continue
+            hedef = None
             if k.gorev == "cozumleme":
                 ok = bool(v and v.get("personel_turu") and isinstance(v.get("alt_sorular", []), list))
-            elif k.gorev == "sentez":
-                durust_yok = dayanak_yok and v and v.get("guven") == "hukum_yok" and not v.get("kisa_cevap")
-                ok = (temiz and not duzeltildi) or bool(durust_yok)
-            elif k.gorev == "duzeltme":
-                ok = temiz
+            elif k.gorev in ("sentez", "duzeltme"):
+                if (k.gorev == "sentez" and son_duzeltme is not None and son_duzeltme > i
+                        and _kaynak_satirlari(kayit[son_duzeltme]) == _kaynak_satirlari(k)):
+                    hedef = gecerli[son_duzeltme]
+                else:
+                    hedef = gecerli.get(i)
+                ok = hedef is not None
             elif k.gorev == "elestiri":
                 ok = temiz or bool(v and v.get("sorunlar"))      # gerçek sorun bulan eleştiri de değerli
             else:
                 ok = False
             if ok:
-                ornekler.append(self._ornek(k, bolum, h["id"]))
+                o = self._ornek(k, bolum, h["id"])
+                if hedef is not None:
+                    o["cevap"] = json.dumps(hedef, ensure_ascii=False)
+                    if hedef is not v:
+                        o["duzenlendi"] = True
+                ornekler.append(o)
+                if hedef is not None and hedef is not v:
+                    self.rapor.say(self.rapor.ornek, f"{k.gorev}:ayiklanmis")
             else:
                 self.rapor.say(self.rapor.atilan, k.gorev)
                 self._atilan_yaz(k, "sinama" if k.gorev in ("sentez", "duzeltme", "elestiri") else "gecersiz",
                                  {"durum": c.durum.value, "altin": gecti, "dayanak_yok": dayanak_yok,
-                                  "cikarilan": [x.get("test") for x in den.get("cikarilanlar", [])][:6]})
+                                  "alintiya": bool(den.get("alintiya_donus")), "cikan_cumle": len(cikan),
+                                  "dogrudan": (v or {}).get("dogrudan_cevap"),
+                                  "kisa_cevap": len((v or {}).get("kisa_cevap") or [])})
         for x in den.get("cikarilanlar", [])[:8]:
             hatalar.append(f"[{x.get('test', '')}] {x.get('metin', '')[:160]} — {x.get('neden', '')[:120]}")
         if temiz:

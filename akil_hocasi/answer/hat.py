@@ -119,9 +119,11 @@ SENTEZ_GOREVI = (
     "— Bu durumda: …'); adimlar (kim, neyi, hangi belge/formla yapacak; sıralı); dikkat (süre, istisna, risk); "
     "degerlendirme (kaynakta açıkça yazmayan çıkarım ve yorumların; yeni sayı, süre, madde yazma); guven; "
     "acik_nokta (cevaplanamayan kısım). Her bilgi cümlesinin kaynaklar alanına dayandığı kaynak kimliklerini yaz "
-    "(K1, K2…). Alıntıyı harfi harfine ve çift tırnakla yap. Kaynaklar soruyu doğrudan cevaplamıyorsa "
-    "dogrudan_cevap=false yap, en yakın hükümleri dikkat bölümünde an ve acik_nokta'yı doldur. Personel türü belirsiz "
-    "ve cevap türe göre değişiyorsa sonucu türe göre koşullu yaz. Yalnızca istenen JSON'u döndür.")
+    "(K1, K2…). Alıntıyı harfi harfine ve çift tırnakla yap. dogrudan_cevap=false yalnızca kaynaklarda sorunun "
+    "konusunu düzenleyen hiçbir hüküm yoksa yapılır: o zaman en yakın hükümleri dikkat bölümünde an ve acik_nokta'yı "
+    "doldur. Eksik bilgi (personel türü, tarih, statü) hükmü ortadan kaldırmaz: dogrudan_cevap=true kalır, kisa_cevap'ı "
+    "türe ya da duruma göre koşullu yaz ('657/4-A memuru ise …; 4/B ise …') ve eksik bilgiyi acik_nokta'ya yaz. "
+    "dogrudan_cevap=true iken kisa_cevap boş bırakılmaz. Yalnızca istenen JSON'u döndür.")
 
 ELESTIRI_SEMASI = {
     "type": "object",
