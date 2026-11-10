@@ -389,8 +389,14 @@ def egit(arg) -> None:
     bildir(f"{len(ornekler)} geçerli örnek, dengelenmiş {len(secilen)}: "
            + ", ".join(f"{g} {sum(1 for o in secilen if o['gorev'] == g)}" for g in sorted({o['gorev'] for o in secilen})))
 
+    # T4 (15 GB): 16 bit 4B + 6k belirteçlik örnekler bellek dışına taşıyor (deneme: CUDA OOM). Eğitim 4 bit taban
+    # üzerinde (QLoRA) yapılır; birleştirme ise asıl 16 bit tabanla yapılır (nicemleme hatası modele işlenmez).
+    kart_gb = torch.cuda.get_device_properties(0).total_memory / 2**30 if torch.cuda.is_available() else 0
+    dort_bit = arg.dort_bit == "evet" or (arg.dort_bit == "oto" and kart_gb < 20)
+    bildir(f"Eğitim kipi: {'4 bit taban (QLoRA)' if dort_bit else '16 bit taban (LoRA)'}; kart {kart_gb:.1f} GB")
     model, tokenizer = FastLanguageModel.from_pretrained(model_name=hf_kimlik, max_seq_length=arg.en_cok_belirtec,
-                                                         load_in_4bit=False, load_in_16bit=True, full_finetuning=False)
+                                                         load_in_4bit=dort_bit, load_in_16bit=not dort_bit,
+                                                         full_finetuning=False)
     tok = getattr(tokenizer, "tokenizer", tokenizer)            # çok kipli modelde işlemcinin içindeki belirteçleyici
 
     def sablon(mesajlar):
@@ -458,7 +464,7 @@ def egit(arg) -> None:
     bin_k = llama_hazirla(gpu=True)
     birlesik = GECICI / "birlesik"
     try:
-        model.save_pretrained_merged(str(birlesik), tokenizer, save_method="merged_16bit")
+        temiz_birlestir(model, tokenizer, hf_kimlik, birlesik, dort_bit)
         kaynak_llama = GECICI / "llama.cpp"
         if not kaynak_llama.is_dir():
             sh(f"git clone --depth 1 https://github.com/ggml-org/llama.cpp {kaynak_llama}")
@@ -494,6 +500,41 @@ def egit(arg) -> None:
     rapor_yaz(model_k / "EGITIM_RAPORU.md", bilgi, secilen)
     bildir(("Gelişim kapısı GEÇİLDİ" if kapi_sonucu[0] else "Gelişim kapısı geçilemedi") + f": {kapi_sonucu[1]}")
     bildir(f"Çıktı: {model_k} (Output sekmesinden indirip Zekâ › Eğitilmiş modeli ekle ile yükleyin)")
+
+
+def temiz_birlestir(model, tokenizer, hf_kimlik: str, hedef: Path, dort_bit: bool) -> None:
+    """LoRA'yı asıl (16 bit) tabana birleştirir. 4 bit eğitimde birleştirme CPU'da, orijinal ağırlıklarla yapılır;
+    olmazsa Unsloth'un kendi birleştirmesine dönülür."""
+    if not dort_bit:
+        model.save_pretrained_merged(str(hedef), tokenizer, save_method="merged_16bit")
+        return
+    import torch
+    import transformers
+    from peft import PeftModel
+    uyarlayici = GECICI / "lora"
+    model.save_pretrained(str(uyarlayici))
+    tokenizer.save_pretrained(str(uyarlayici))
+    taban = None
+    for sinif in ("AutoModelForImageTextToText", "AutoModelForCausalLM"):
+        try:
+            taban = getattr(transformers, sinif).from_pretrained(hf_kimlik, dtype=torch.bfloat16, device_map="cpu",
+                                                                 low_cpu_mem_usage=True)
+            break
+        except Exception as e:  # noqa: BLE001
+            bildir(f"Taban {sinif} ile yüklenemedi: {type(e).__name__}: {str(e)[:200]}")
+    try:
+        if taban is None:
+            raise RuntimeError("taban model yüklenemedi")
+        birlesik = PeftModel.from_pretrained(taban, str(uyarlayici)).merge_and_unload()
+        hedef.mkdir(parents=True, exist_ok=True)
+        birlesik.save_pretrained(str(hedef), safe_serialization=True)
+        tokenizer.save_pretrained(str(hedef))
+        bildir("LoRA asıl 16 bit tabana CPU'da birleştirildi")
+        del birlesik, taban
+    except Exception as e:  # noqa: BLE001
+        bildir(f"Temiz birleştirme olmadı ({type(e).__name__}: {str(e)[:200]}); Unsloth birleştirmesi kullanılıyor")
+        shutil.rmtree(hedef, ignore_errors=True)
+        model.save_pretrained_merged(str(hedef), tokenizer, save_method="merged_16bit")
 
 
 def gpu_sayisi() -> int:
@@ -623,6 +664,8 @@ def main() -> None:
     e.add_argument("--ogrenme-hizi", type=float, default=1e-4)
     e.add_argument("--lora-r", type=int, default=32)
     e.add_argument("--en-cok-belirtec", type=int, default=6144)
+    e.add_argument("--dort-bit", choices=["oto", "evet", "hayir"], default="oto",
+                   help="taban model eğitimde 4 bit (QLoRA); oto: 20 GB'tan küçük kartta")
     e.add_argument("--sinav", type=int, default=150, help="sınavda kullanılacak en çok soru")
     e.add_argument("--surum", default="")
     arg = p.parse_args()
