@@ -190,8 +190,18 @@ def durum(arg) -> None:
                 print(f"===== {f} =====\n{f.read_text('utf-8', errors='replace')[:6000]}")
         for f in hedef.rglob("atilan_ornekler.jsonl"):     # tanılama (Actions eki indirilemeyebilir: günlüğe)
             print(f"===== {f.name} =====")
-            for satir in f.read_text("utf-8", errors="replace").splitlines()[:60]:
-                print(satir[:3500])
+            for satir in f.read_text("utf-8", errors="replace").splitlines()[:80]:
+                try:
+                    d = json.loads(satir)
+                except ValueError:
+                    print(satir[:1500])
+                    continue
+                ozet = {a: d.get(a) for a in ("neden", "bitis", "belirtec", "sure", "durum", "altin", "dayanak_yok",
+                                              "cikarilan", "model", "hata") if a in d}
+                ozet["cevap"] = str(d.get("cevap", ""))[:1400]
+                if "bozuk" in str(d.get("neden")) or not ozet["cevap"]:
+                    ozet["ham"] = str(d.get("ham", ""))[:900]
+                print(json.dumps(ozet, ensure_ascii=False))
         for f in sorted(hedef.rglob("sunucu_*.txt")):
             print(f"===== {f.name} (son 80 satır) =====")
             print("\n".join(f.read_text("utf-8", errors="replace").splitlines()[-80:]))
