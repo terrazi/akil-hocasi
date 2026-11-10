@@ -221,7 +221,7 @@ def main() -> None:
     p.add_argument("--veri-turu", type=int, default=1, help="eğitimde kullanılacak veri turu sayısı")
     p.add_argument("--sure-saat", type=float, default=10.5)
     p.add_argument("--soru", type=int, default=4000)
-    p.add_argument("--paralel", type=int, default=4)
+    p.add_argument("--paralel", type=int, default=8)
     p.add_argument("--tarama-dk", type=float, default=40)
     p.add_argument("--ogrenci", default="4B")
     p.add_argument("--epoch", type=float, default=2)

@@ -290,7 +290,8 @@ def veri(arg) -> None:
                         ["--split-mode", "layer", "--jinja"])
             sunucular.append(so)
             adres = so.adres
-        ogretmen = OgretmenModeli(adres, OGRETMENLER.get(arg.ogretmen, ("öğretmen",))[0])
+        ogretmen = OgretmenModeli(adres, OGRETMENLER.get(arg.ogretmen, ("öğretmen",))[0],
+                                  OgretmenModeli.DUSUNEN_GOREVLER if arg.dusunme else ())
         kalan_dk = max(1.0, (bitis_saat - time.monotonic()) / 60 - 15)   # paketleme payı
         d = Damitici(s, ogretmen, veri_k, bildir)
         rapor = d.calistir(kalan_dk, arg.soru, arg.yazi_orani, arg.paralel, ek_sorular)
@@ -565,8 +566,9 @@ def main() -> None:
     v = alt.add_parser("veri", help="öğretmenle eğitim verisi üret (1. defter)")
     v.add_argument("--sure-saat", type=float, default=10.5)
     v.add_argument("--soru", type=int, default=4000, help="bu oturumda en çok işlenecek soru")
-    v.add_argument("--paralel", type=int, default=4)
-    v.add_argument("--yuva-baglami", type=int, default=16384, help="sunucu yuvası başına bağlam")
+    v.add_argument("--paralel", type=int, default=8, help="öğretmen sunucusundaki eşzamanlı istek (yuva)")
+    v.add_argument("--yuva-baglami", type=int, default=12288, help="sunucu yuvası başına bağlam")
+    v.add_argument("--dusunme", action="store_true", help="öğretmen sentez/düzeltme/yazıda düşünsün (yavaş)")
     v.add_argument("--ogretmen", choices=sorted(OGRETMENLER), default="Q4_K_M")
     v.add_argument("--ogretmen-adres", default="", help="hazır bir öğretmen sunucusu (derleme/indirme atlanır)")
     v.add_argument("--anlamsiz", action="store_true", help="anlam araması olmadan")

@@ -161,3 +161,10 @@ def test_dusunce_ayirma():
     assert dusunceyi_ayir('<think>a</think>\n{"x": 1}') == ('{"x": 1}', "a")
     assert dusunceyi_ayir('uzun düşünce</think>\n\n{"x": 1}') == ('{"x": 1}', "uzun düşünce")   # açılışı istemde
     assert dusunceyi_ayir('{"x": 1}') == ('{"x": 1}', "")
+
+
+def test_kisa_yaz_notu_yalniz_istekte():
+    from akil_hocasi.yz.damitma import kisa_yaz_notu
+    m = [{"role": "system", "content": "s"}, {"role": "user", "content": "soru"}]
+    g = kisa_yaz_notu(m, 500)
+    assert m[-1]["content"] == "soru" and "Uzunluk sınırı" in g[-1]["content"] and "1050 karakter" in g[-1]["content"]

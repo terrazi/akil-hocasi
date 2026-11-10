@@ -98,11 +98,16 @@ class OgretmenModeli:
 
     hazir = True
 
-    def __init__(self, adres: str, ad: str = "öğretmen", dusunen_gorevler: tuple[str, ...] = ("sentez", "duzeltme",
-                                                                                                 "yazi", "yazi_duzeltme"),
-                 zaman_asimi: float = 900):
+    DUSUNEN_GOREVLER = ("sentez", "duzeltme", "yazi", "yazi_duzeltme")
+
+    def __init__(self, adres: str, ad: str = "öğretmen", dusunen_gorevler: tuple[str, ...] = (),
+                 zaman_asimi: float = 900, kisa_yaz: bool = True):
+        # Düşünme varsayılan olarak kapalı: deneme turunda 35B öğretmen İngilizce ve döngüsel düşünüp 4400 belirteçlik
+        # bütçeyi cevaba geçmeden bitirdi (çağrı başına ~160 sn). Programın kendi yordam zinciri (çözümleme → sentez →
+        # eleştiri → düzeltme) zaten adım adım akıl yürütmedir.
         self.adres, self.ad = adres.rstrip("/"), ad
         self.dusunen = set(dusunen_gorevler)
+        self.kisa_yaz = kisa_yaz
         self.zaman_asimi = zaman_asimi
         self._yerel = threading.local()
         self.sayac = {"cagri": 0, "hata": 0}
@@ -122,7 +127,8 @@ class OgretmenModeli:
         mesajlar = onbellek_dostu(mesajlar)
         gorev = gorev_turu(mesajlar)
         dusun = gorev in self.dusunen
-        govde = {"messages": mesajlar, "max_tokens": max_tokens + (3000 if dusun else 0), "temperature": sicaklik,
+        giden = kisa_yaz_notu(mesajlar, max_tokens) if self.kisa_yaz else mesajlar
+        govde = {"messages": giden, "max_tokens": max_tokens + (3000 if dusun else 0), "temperature": sicaklik,
                  "top_p": 0.9, "cache_prompt": True, "chat_template_kwargs": {"enable_thinking": dusun}}
         # Düşünürken dilbilgisi (JSON şeması) uygulanmaz: llama.cpp kısıtı düşünce bloğunun içine de uygular ve
         # model JSON'u düşüncenin içinde bırakır. Düşünen öğretmen JSON'u istemdeki tarife göre kendisi yazar.
@@ -147,8 +153,8 @@ class OgretmenModeli:
         icerik, ek_dusunce = dusunceyi_ayir(ham)
         dusunce += ek_dusunce
         beklenen_json = bool(json_sema or json_mod)
-        if beklenen_json and _json_gecerli(icerik) is None and not icerik and _json_gecerli(dusunce) is not None:
-            icerik = _JSON_SON.search(dusunce).group(0)     # sunucu cevabı düşünce alanına koymuş
+        if beklenen_json and not dusun and not icerik and _json_gecerli(dusunce) is not None:
+            icerik = _JSON_SON.search(dusunce).group(0)     # düşünme istenmediği hâlde sunucu cevabı oraya koymuş
         with self._sayac_kilit:
             self.sayac["cagri"] += 1
         kayit = getattr(self._yerel, "kayit", None)
@@ -161,6 +167,21 @@ class OgretmenModeli:
 
 
 _JSON_SON = re.compile(r"\{.*\}", re.S)
+
+
+def kisa_yaz_notu(mesajlar: list[dict], max_tokens: int) -> list[dict]:
+    """Yalnız öğretmene giden istemin sonuna uzunluk notu ekler (kayda ve eğitim örneğine girmez). Öğretmen
+    ayrıntılı yazınca programın belirteç sınırında kesiliyordu; öğrenci de çalışırken aynı sınırla yazacak.
+    Türkçede bir belirteç ~3 karakter."""
+    if not mesajlar or mesajlar[-1].get("role") != "user":
+        return mesajlar
+    karakter = int(max_tokens * 3 * 0.7)
+    not_ = (f"\n\n[Uzunluk sınırı: cevabın tamamı en çok yaklaşık {karakter} karakter olsun. Dizilerde yalnız gerçekten "
+            "gerekli öğeleri ver; her öğe tek ve kısa bir cümle olsun. Kısalık için doğruluktan ve kaynak "
+            "göstermekten ödün verme.]")
+    son = dict(mesajlar[-1])
+    son["content"] = str(son.get("content", "")) + not_
+    return mesajlar[:-1] + [son]
 
 
 def dusunceyi_ayir(metin: str) -> tuple[str, str]:

@@ -87,7 +87,7 @@ girer, model kurumun ihtiyacına giderek daha iyi uyar.
 ## Sorun giderme
 
 - **"CUDA out of memory" (2. defter):** Ayarlar hücresinde `EN_COK_BELIRTEC = 4096` yapın.
-- **"CUDA out of memory" (1. defter):** Ayarlar hücresinde `OGRETMEN = "Q4_K_S"` ya da `"Q3_K_M"` yapın; `PARALEL = 2`.
+- **"CUDA out of memory" (1. defter):** Ayarlar hücresinde `OGRETMEN = "Q4_K_S"` ya da `"Q3_K_M"` yapın; `PARALEL = 4`.
 - **Unsloth kurulum hatası (2. defter):** Unsloth'un güncel Kaggle defterlerindeki kurulum hücresini kullanın
   (github.com/unslothai/notebooks, `Kaggle-Qwen3_5` defterleri).
 - **mevzuat.gov.tr'ye ulaşılamadı:** Eğitim paketiyle (programın kütüphanesi) çalıştırın.
