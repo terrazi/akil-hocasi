@@ -399,11 +399,13 @@ def egit(arg) -> None:
     veri_dosyasi.write_text("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in ciftler), "utf-8")
 
     # Eğitim: iki kart varsa DDP; olmazsa tek kart. Dönüştürme ve sınav payı ayrılır.
-    pay = min(2.5 * 3600, 0.4 * arg.sure_saat * 3600)
+    pay = min(1.75 * 3600, 0.4 * arg.sure_saat * 3600)
     egitim_bitis = bitis_duvar - pay
     uyarlayici, istatistik = GECICI / "lora", GECICI / "egitim_istatistik.json"
     kart = gpu_sayisi()
-    for n in ([kart, 1] if kart > 1 else [1]):
+    # Denemeler sırayla: fp32 hesap (T4'te emüle bf16 katmanları yavaşlatıyor), Unsloth'un varsayılanı, tek kart.
+    denemeler = ([(kart, "fp32"), (kart, "oto")] if kart > 1 else []) + [(1, "fp32"), (1, "oto")]
+    for n, hesap in denemeler:
         shutil.rmtree(uyarlayici, ignore_errors=True)
         istatistik.unlink(missing_ok=True)
         if time.time() > egitim_bitis - 600:
@@ -414,17 +416,17 @@ def egit(arg) -> None:
                  "--cikti", str(uyarlayici), "--istatistik", str(istatistik), "--bitis", str(egitim_bitis),
                  "--epoch", str(arg.epoch), "--ogrenme-hizi", str(arg.ogrenme_hizi), "--lora-r", str(arg.lora_r),
                  "--en-cok-belirtec", str(arg.en_cok_belirtec), "--dort-bit", arg.dort_bit,
-                 "--ornek-sn", str(arg.ornek_sn)]
+                 "--ornek-sn", str(arg.ornek_sn), "--hesap", hesap]
         if n > 1:
             komut = [sys.executable, "-m", "torch.distributed.run", "--standalone", f"--nproc_per_node={n}"] + betik
         else:
             ortam["CUDA_VISIBLE_DEVICES"] = "0"
             komut = [sys.executable] + betik
-        bildir(f"Eğitim {n} kartta başlıyor")
+        bildir(f"Eğitim {n} kartta başlıyor (hesap: {hesap})")
         r = subprocess.run(komut, env=ortam)
         if r.returncode == 0 and (uyarlayici / "adapter_config.json").is_file():
             break
-        bildir(f"{n} kartlı eğitim başarısız (çıkış {r.returncode})" + ("; tek kartla yeniden" if n > 1 else ""))
+        bildir(f"{n} kart / {hesap} eğitimi başarısız (çıkış {r.returncode}); sonraki deneme")
     if not (uyarlayici / "adapter_config.json").is_file():
         raise SystemExit("Eğitim tamamlanamadı (uyarlayıcı yok)")
     ist = json.loads(istatistik.read_text("utf-8")) if istatistik.is_file() else {}
@@ -504,6 +506,8 @@ def ogren(arg) -> None:
     if ana:
         bildir(f"Eğitim kipi: {'4 bit taban (QLoRA)' if dort_bit else '16 bit taban (LoRA)'}; {dunya} kart, {kart_gb:.1f} GB")
     ek = {"device_map": {"": f"cuda:{sira}"}} if dunya > 1 else {}
+    if arg.hesap == "fp32" and torch.cuda.get_device_capability(sira)[0] < 8:
+        ek["dtype"] = torch.float32
     model, tokenizer = FastLanguageModel.from_pretrained(model_name=arg.model, max_seq_length=arg.en_cok_belirtec,
                                                          load_in_4bit=dort_bit, load_in_16bit=not dort_bit,
                                                          full_finetuning=False, **ek)
@@ -705,8 +709,12 @@ def rapor_yaz(yol: Path, bilgi: dict, secilen: list[dict]) -> None:
         a, b = t["notlar"].get(i.kod), y["notlar"].get(i.kod)
         if a is not None or b is not None:
             satirlar.append(f"| {i.ad} | {a if a is not None else '—'} | {b if b is not None else '—'} |")
+    def isabet(k):
+        return f"%{round(100 * (k['dogrulanan'] - k['kritik']) / k['dogrulanan'])}" if k.get("dogrulanan") else "—"
+
     satirlar += ["", f"Başarı: %{round(100 * t['basari'])} → %{round(100 * y['basari'])}; kritik hata: "
-                     f"{t['kritik']} → {y['kritik']}; soru sayısı: {y['toplam']}", "",
+                     f"{t['kritik']} → {y['kritik']}; güvenle verilen cevapların isabeti: {isabet(t)} → {isabet(y)}; "
+                     f"soru sayısı: {y['toplam']}", "",
                  "Program bu modeli Zekâ › Eğitilmiş modeli ekle ile alır; kendi bilgisayarındaki altın soru setiyle "
                  "yeniden sınar ve daha iyi değilse kullanmaz."]
     yol.write_text("\n".join(satirlar), "utf-8")
@@ -738,8 +746,8 @@ def main() -> None:
                    help="taban model eğitimde 4 bit (QLoRA); oto: 20 GB'tan küçük kartta")
     e.add_argument("--sinav", type=int, default=150, help="sınavda kullanılacak en çok soru")
     e.add_argument("--surum", default="")
-    e.add_argument("--ornek-sn", type=float, default=16.0,
-                   help="tek kartta örnek başına eğitim süresi tahmini (dönem sayısını süreye sığdırmak için)")
+    e.add_argument("--ornek-sn", type=float, default=22.0,
+                   help="kart başına örnek eğitim süresi tahmini, sn (T4 QLoRA ölçümü ~22; dönemi süreye sığdırır)")
     o = alt.add_parser("ogren", help="(iç) eğitim süreci; egit tarafından torchrun ile başlatılır")
     o.add_argument("--model", required=True)
     o.add_argument("--veri", required=True)
@@ -751,7 +759,8 @@ def main() -> None:
     o.add_argument("--lora-r", type=int, default=32)
     o.add_argument("--en-cok-belirtec", type=int, default=6144)
     o.add_argument("--dort-bit", choices=["oto", "evet", "hayir"], default="oto")
-    o.add_argument("--ornek-sn", type=float, default=16.0)
+    o.add_argument("--ornek-sn", type=float, default=22.0)
+    o.add_argument("--hesap", choices=["oto", "fp32"], default="oto")
     arg = p.parse_args()
     GECICI.mkdir(parents=True, exist_ok=True)
     CALISMA.mkdir(parents=True, exist_ok=True)

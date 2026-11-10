@@ -94,6 +94,12 @@ def test_kapi_kararlari():
     ayni = Karne(notlar=eski.notlar, ornek=eski.ornek, basari=0.6, toplam=10)
     assert not kapi(eski, ayni)[0]
     assert not kapi(eski, Karne())[0]
+    # Daha çok soruya güvenle cevap veren model: kritik sayısı artsa da isabet düşmediyse ve başarı belirgin arttıysa
+    e2 = Karne(notlar=eski.notlar, ornek=eski.ornek, basari=0.2, kritik=1, toplam=30, dogrulanan=7)     # isabet 6/7
+    y2 = Karne(notlar=iyi.notlar, ornek=eski.ornek, basari=0.6, kritik=2, toplam=30, dogrulanan=20)    # isabet 18/20
+    assert kapi(e2, y2)[0]
+    y3 = Karne(notlar=iyi.notlar, ornek=eski.ornek, basari=0.6, kritik=5, toplam=30, dogrulanan=20)    # isabet 15/20
+    assert not kapi(e2, y3)[0]
 
 
 # ------------------------------------------------------------------ muhakeme

@@ -26,6 +26,11 @@ class Karne:
     basari: float = 0.0                                          # beklenen cevabı veren soru oranı
     kritik: int = 0
     toplam: int = 0
+    dogrulanan: int = 0                                          # 'Doğrulandı' denen (güvenle verilen) cevap sayısı
+
+    def kesinlik(self) -> float | None:
+        """Güvenle verilen cevapların isabeti: 'Doğrulandı' denenlerden beklenen cevabı verenlerin oranı."""
+        return (self.dogrulanan - self.kritik) / self.dogrulanan if self.dogrulanan else None
 
     def ortalama(self) -> float:
         degerler = [v for k, v in self.notlar.items() if self.ornek.get(k)]
@@ -34,6 +39,7 @@ class Karne:
     def sozluk(self) -> dict:
         return {"notlar": {k: round(v, 3) for k, v in self.notlar.items()}, "ornek": self.ornek,
                 "basari": round(self.basari, 3), "kritik": self.kritik, "toplam": self.toplam,
+                "dogrulanan": self.dogrulanan,
                 "ortalama": round(self.ortalama(), 3)}
 
 
@@ -75,16 +81,17 @@ def karne_hesapla(sonuclar: list[tuple[object, dict | None, bool, bool]]) -> Kar
     """sonuclar: (cevap, beklenti, geçti_mi, kritik_mi) listesi."""
     toplamlar: dict[str, float] = {k: 0.0 for k in ILKE_KODLARI}
     sayilar: dict[str, int] = {k: 0 for k in ILKE_KODLARI}
-    gecen = kritik = 0
+    gecen = kritik = dogrulanan = 0
     for cevap, beklenti, gecti, krt in sonuclar:
         for k, v in cevap_puanlari(cevap, beklenti).items():
             toplamlar[k] += v
             sayilar[k] += 1
         gecen += int(gecti)
         kritik += int(krt)
+        dogrulanan += int(getattr(getattr(cevap, "durum", None), "value", "") == "Doğrulandı")
     n = len(sonuclar)
     return Karne(notlar={k: (toplamlar[k] / sayilar[k] if sayilar[k] else 1.0) for k in ILKE_KODLARI},
-                 ornek=sayilar, basari=(gecen / n if n else 0.0), kritik=kritik, toplam=n)
+                 ornek=sayilar, basari=(gecen / n if n else 0.0), kritik=kritik, toplam=n, dogrulanan=dogrulanan)
 
 
 def kapi(eski: Karne, yeni: Karne, tolerans: float = 0.02, en_az_artis: float = 0.005) -> tuple[bool, str]:
@@ -96,7 +103,12 @@ def kapi(eski: Karne, yeni: Karne, tolerans: float = 0.02, en_az_artis: float = 
     if dusen:
         return False, "İlke notu düştü: " + ", ".join(dusen)
     if yeni.kritik > eski.kritik:
-        return False, f"Kritik hata arttı ({eski.kritik} → {yeni.kritik})"
+        # Kritik sayısı, daha çok soruya güvenle cevap veren modelde kendiliğinden artabilir. Bu yalnız güvenle
+        # verilen cevapların isabeti düşmediyse, başarı belirgin arttıysa ve set yeterince büyükse kabul edilir.
+        ek, yk = eski.kesinlik(), yeni.kesinlik()
+        if not (ek is not None and yk is not None and yk >= ek and yeni.toplam >= 20
+                and yeni.basari - eski.basari >= 0.10):
+            return False, f"Kritik hata arttı ({eski.kritik} → {yeni.kritik})"
     if yeni.basari < eski.basari - 1e-9:
         return False, f"Başarı düştü ({eski.basari:.0%} → {yeni.basari:.0%})"
     artis = (yeni.basari - eski.basari) + (yeni.ortalama() - eski.ortalama())
