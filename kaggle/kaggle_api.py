@@ -234,27 +234,20 @@ def dogrula(arg) -> None:
 
 
 def kota_goster() -> None:
-    """Kaggle SDK'sında kota/oturum bilgisi veren bir çağrı varsa gösterir (yalnız okuma)."""
+    """Hızlandırıcı (GPU) kotası: kullanılan ve kalan süre (yalnız okuma)."""
     try:
-        import pkgutil
-
-        import kagglesdk
-        adlar = []
-        for m in pkgutil.walk_packages(kagglesdk.__path__, "kagglesdk."):
-            if any(s in m.name for s in ("quota", "session", "users", "kernels")):
-                adlar.append(m.name)
-        print("SDK modülleri:", ", ".join(adlar[:40]))
-        import importlib
-        for ad in adlar:
-            try:
-                mod = importlib.import_module(ad)
-            except Exception:  # noqa: BLE001
-                continue
-            for nesne in dir(mod):
-                if "quota" in nesne.lower() or "Quota" in nesne:
-                    print(f"  {ad}.{nesne}")
+        from kaggle.api.kaggle_api_extended import KaggleApi
+        from kagglesdk.kernels.types.kernels_api_service import ApiGetAcceleratorQuotaStatisticsRequest
+        api = KaggleApi()
+        api.authenticate()
+        with api.build_kaggle_client() as istemci:
+            hizmet = istemci.kernels.kernels_api_client
+            yanit = hizmet.get_accelerator_quota_statistics(ApiGetAcceleratorQuotaStatisticsRequest())
+        veri = yanit.to_dict() if hasattr(yanit, "to_dict") else {a: getattr(yanit, a) for a in dir(yanit)
+                                                                    if not a.startswith("_")}
+        print("GPU KOTASI:", json.dumps(veri, ensure_ascii=False, default=str)[:3000])
     except Exception as e:  # noqa: BLE001
-        print(f"(kota bilgisi alınamadı: {e})")
+        print(f"(kota bilgisi alınamadı: {type(e).__name__}: {e})")
 
 
 def main() -> None:
