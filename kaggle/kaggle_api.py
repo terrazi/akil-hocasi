@@ -178,14 +178,15 @@ def durum(arg) -> None:
         hedef.mkdir(parents=True)
         kaggle("kernels", "output", k, "-p", str(hedef), yakala=True)
         for g in hedef.rglob("*.log"):                  # defter günlüğünün sonu Actions günlüğünde görünsün
-            print(f"===== {g.name} (son 400 satır) =====")
+            print(f"===== {g.name} (son 500 anlamlı satır) =====")
             try:
                 satirlar = []
                 for kayit in json.loads(g.read_text("utf-8", errors="replace")):
                     satirlar += str(kayit.get("data", "")).splitlines()
             except ValueError:
                 satirlar = g.read_text("utf-8", errors="replace").splitlines()
-            print("\n".join(satirlar[-400:]))
+            satirlar = [s for s in satirlar if "%|" not in s and s.strip()]     # ilerleme çubukları atlanır
+            print("\n".join(satirlar[-500:]))
         if "complete" in durum_metni:
             derleme_paylas(hedef)
         for ad in ("manifest.json", "rapor.json", "EGITIM_RAPORU.md"):
