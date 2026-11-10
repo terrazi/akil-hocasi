@@ -230,6 +230,31 @@ def dogrula(arg) -> None:
     print(f"Kaggle kullanıcısı: {kullanici()}")
     kaggle("kernels", "list", "--mine", "--page-size", "20")
     print("Kaggle kimliği çalışıyor.")
+    kota_goster()
+
+
+def kota_goster() -> None:
+    """Kaggle SDK'sında kota/oturum bilgisi veren bir çağrı varsa gösterir (yalnız okuma)."""
+    try:
+        import pkgutil
+
+        import kagglesdk
+        adlar = []
+        for m in pkgutil.walk_packages(kagglesdk.__path__, "kagglesdk."):
+            if any(s in m.name for s in ("quota", "session", "users", "kernels")):
+                adlar.append(m.name)
+        print("SDK modülleri:", ", ".join(adlar[:40]))
+        import importlib
+        for ad in adlar:
+            try:
+                mod = importlib.import_module(ad)
+            except Exception:  # noqa: BLE001
+                continue
+            for nesne in dir(mod):
+                if "quota" in nesne.lower() or "Quota" in nesne:
+                    print(f"  {ad}.{nesne}")
+    except Exception as e:  # noqa: BLE001
+        print(f"(kota bilgisi alınamadı: {e})")
 
 
 def main() -> None:
