@@ -238,6 +238,17 @@ def dogrulanmis_taslak(v: dict, cikan: set[str]) -> tuple[dict, int, int]:
     return yeni, toplam, atilan
 
 
+def _isaretsiz(v):
+    """Metin alanlarındaki Markdown kalın/italik işaretlerini kaldırır (program düz metin gösterir)."""
+    if isinstance(v, dict):
+        return {a: _isaretsiz(d) for a, d in v.items()}
+    if isinstance(v, list):
+        return [_isaretsiz(x) for x in v]
+    if isinstance(v, str):
+        return re.sub(r"\*\*(.+?)\*\*|__(.+?)__", lambda m: m.group(1) or m.group(2), v)
+    return v
+
+
 def _kaynak_satirlari(k: "Cagri") -> list[str]:
     metin = "\n".join(str(m.get("content", "")) for m in k.mesajlar if m.get("role") == "user")
     return re.findall(r"^\[K\d+\][^\n]*", metin, re.M)
@@ -351,7 +362,7 @@ class Damitici:
         cevap = c.cevap
         v = _json_gecerli(cevap) if c.json else None
         if v is not None:                    # JSON sıkıştırılır: öğrenci boşluksuz yazar, CPU'da daha az belirteç
-            cevap = json.dumps(v, ensure_ascii=False)
+            cevap = json.dumps(_isaretsiz(v), ensure_ascii=False)
         return {"gorev": c.gorev, "messages": c.mesajlar, "cevap": cevap, "json": c.json, "bolum": bolum,
                 "soru_id": soru_id}
 
@@ -473,12 +484,11 @@ class Damitici:
             if ok:
                 o = self._ornek(k, bolum, h["id"])
                 if hedef is not None:
-                    o["cevap"] = json.dumps(hedef, ensure_ascii=False)
-                    if hedef is not v:
+                    o["cevap"] = json.dumps(_isaretsiz(hedef), ensure_ascii=False)
+                    if _json_gecerli(o["cevap"]) != _isaretsiz(v):
                         o["duzenlendi"] = True
+                        self.rapor.say(self.rapor.ornek, f"{k.gorev}:ayiklanmis")
                 ornekler.append(o)
-                if hedef is not None and hedef is not v:
-                    self.rapor.say(self.rapor.ornek, f"{k.gorev}:ayiklanmis")
             else:
                 self.rapor.say(self.rapor.atilan, k.gorev)
                 self._atilan_yaz(k, "sinama" if k.gorev in ("sentez", "duzeltme", "elestiri") else "gecersiz",
