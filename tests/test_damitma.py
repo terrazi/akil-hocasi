@@ -148,8 +148,8 @@ def test_egitim_verisi_dengeleme_ve_uzunluk(tmp_path):
     ornekler = ornekleri_oku([dosya])
     assert len(ornekler) == 35                                           # sınav ve yineleme ayıklandı
     secilen = dengele(ornekler, toplam=20)
-    assert sum(1 for o in secilen if o["gorev"] == "sentez") <= 7        # pay sınırı (%32)
-    assert sum(1 for o in secilen if o["gorev"] == "cozumleme") == 3
+    assert sum(1 for o in secilen if o["gorev"] == "sentez") <= 13       # pay sınırı (%32 × 2)
+    assert sum(1 for o in secilen if o["gorev"] == "cozumleme") == 5     # payının altındaki görev kırpılmaz
     metinler, atilan = egitim_metinleri(secilen + [{"gorev": "sentez", "messages": [{"role": "user", "content": "u" * 999}],
                                                     "cevap": "{}"}],
                                         lambda m: "".join(x["content"] for x in m), len, 200)

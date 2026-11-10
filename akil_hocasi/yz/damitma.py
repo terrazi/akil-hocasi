@@ -675,18 +675,20 @@ def ornekleri_oku(dosyalar: list[Path]) -> list[dict]:
     return cikti
 
 
-def dengele(ornekler: list[dict], toplam: int | None = None, tohum: int = 3407) -> list[dict]:
-    """Görev paylarına göre dengeler: bir görev baskın olup diğer yordamları unutturmasın."""
+def dengele(ornekler: list[dict], toplam: int | None = None, tohum: int = 3407, tavan: float = 2.0) -> list[dict]:
+    """Görev paylarına göre dengeler: bir görev baskın olup diğer yordamları unutturmasın. Bir görev payının
+    `tavan` katını aşarsa kırpılır; payının altında kalan görev olduğu gibi kalır (veri az, örnek atılmaz)."""
     import random
     rnd = random.Random(tohum)
     gruplar: dict[str, list[dict]] = {}
     for o in ornekler:
-        gruplar.setdefault(o["gorev"], []).append(o)
+        if GOREV_PAYLARI.get(o["gorev"], 0) > 0:
+            gruplar.setdefault(o["gorev"], []).append(o)
     toplam = toplam or len(ornekler)
     secilen = []
     for gorev, liste in gruplar.items():
         rnd.shuffle(liste)
-        hedef = max(1, int(round(toplam * GOREV_PAYLARI.get(gorev, 0))))
+        hedef = max(1, int(round(toplam * GOREV_PAYLARI[gorev] * tavan)))
         secilen += liste[:hedef] if len(liste) > hedef else liste
     rnd.shuffle(secilen)
     return secilen

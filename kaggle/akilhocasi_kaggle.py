@@ -434,9 +434,11 @@ def egit(arg) -> None:
             return control
 
     bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    ayar = TrainingArguments(
+    toplam_adim = max(1, int(len(veri_seti) * arg.epoch / 8))
+    ayar = TrainingArguments(                                   # transformers 5: warmup_ratio yok, adım verilir
         output_dir=str(GECICI / "egitim"), per_device_train_batch_size=1, gradient_accumulation_steps=8,
-        num_train_epochs=arg.epoch, learning_rate=arg.ogrenme_hizi, warmup_ratio=0.03, lr_scheduler_type="cosine",
+        num_train_epochs=arg.epoch, learning_rate=arg.ogrenme_hizi, warmup_steps=max(1, int(0.03 * toplam_adim)),
+        lr_scheduler_type="cosine",
         logging_steps=10, save_strategy="no", report_to="none", optim="adamw_8bit", weight_decay=0.01,
         bf16=bf16, fp16=not bf16, seed=3407, remove_unused_columns=False)
     egitici = Trainer(model=model, args=ayar, train_dataset=veri_seti,
