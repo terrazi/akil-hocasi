@@ -367,15 +367,10 @@ def _veri_klasorleri() -> list[Path]:
 
 
 def egit(arg) -> None:
+    """Veriyi hazırlar; eğitimi iki kartta (DDP, torchrun) ayrı süreçte yürütür; LoRA'yı asıl tabana birleştirip
+    GGUF'a çevirir; temel ve eğitilmiş modeli görülmemiş sorularda sınar."""
     bas = time.monotonic()
-    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")          # eğitim tek kartta (Unsloth); sınav sunucusu ikisini de kullanır
-    import gc
-
-    import torch
-    from unsloth import FastLanguageModel  # noqa: I001 - unsloth, transformers'tan önce yüklenmeli
-    from transformers import DataCollatorForSeq2Seq, Trainer, TrainerCallback, TrainingArguments
-    from datasets import Dataset
-
+    bitis_duvar = time.time() + arg.sure_saat * 3600
     from akil_hocasi.yz.damitma import dengele, egitim_metinleri, ornekleri_oku
     veri_k = GECICI / "veri"
     if veri_k.exists():
@@ -389,71 +384,54 @@ def egit(arg) -> None:
     bildir(f"{len(ornekler)} geçerli örnek, dengelenmiş {len(secilen)}: "
            + ", ".join(f"{g} {sum(1 for o in secilen if o['gorev'] == g)}" for g in sorted({o['gorev'] for o in secilen})))
 
-    # T4 (15 GB): 16 bit 4B + 6k belirteçlik örnekler bellek dışına taşıyor (deneme: CUDA OOM). Eğitim 4 bit taban
-    # üzerinde (QLoRA) yapılır; birleştirme ise asıl 16 bit tabanla yapılır (nicemleme hatası modele işlenmez).
-    kart_gb = torch.cuda.get_device_properties(0).total_memory / 2**30 if torch.cuda.is_available() else 0
-    dort_bit = arg.dort_bit == "evet" or (arg.dort_bit == "oto" and kart_gb < 20)
-    bildir(f"Eğitim kipi: {'4 bit taban (QLoRA)' if dort_bit else '16 bit taban (LoRA)'}; kart {kart_gb:.1f} GB")
-    model, tokenizer = FastLanguageModel.from_pretrained(model_name=hf_kimlik, max_seq_length=arg.en_cok_belirtec,
-                                                         load_in_4bit=dort_bit, load_in_16bit=not dort_bit,
-                                                         full_finetuning=False)
-    tok = getattr(tokenizer, "tokenizer", tokenizer)            # çok kipli modelde işlemcinin içindeki belirteçleyici
+    tok = belirtecleyici(hf_kimlik)
 
     def sablon(mesajlar):
-        for nesne in (tokenizer, tok):
-            try:
-                return nesne.apply_chat_template(mesajlar, tokenize=False, add_generation_prompt=True,
-                                                 enable_thinking=False)
-            except Exception:  # noqa: BLE001 - işlemci düz metin içeriği kabul etmezse belirteçleyiciyle
-                continue
-        raise RuntimeError("Sohbet şablonu uygulanamadı")
+        return tok.apply_chat_template(mesajlar, tokenize=False, add_generation_prompt=True, enable_thinking=False)
 
     def uzunluk(metin):
         return len(tok(metin, add_special_tokens=False)["input_ids"])
 
-    bitis_isareti = "<|im_end|>"
-    ornek_istem = sablon(secilen[0]["messages"])
-    bildir("İstem sonu (çalışırken llama-server'ın üreteceğiyle aynı olmalı): " + repr(ornek_istem[-80:]))
+    bildir("İstem sonu (çalışırken llama-server'ın üreteceğiyle aynı olmalı): " + repr(sablon(secilen[0]["messages"])[-80:]))
     ciftler, atilan = egitim_metinleri(secilen, sablon, uzunluk, arg.en_cok_belirtec)
     bildir(f"{len(ciftler)} örnek eğitime giriyor, {atilan} örnek uzunluk sınırını aştı")
+    veri_dosyasi = GECICI / "egitim_ciftleri.jsonl"
+    veri_dosyasi.write_text("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in ciftler), "utf-8")
 
-    def kodla(c):
-        p = tok(c["prompt"], add_special_tokens=False)["input_ids"]
-        t = tok(c["completion"] + bitis_isareti, add_special_tokens=False)["input_ids"]
-        return {"input_ids": p + t, "attention_mask": [1] * (len(p) + len(t)), "labels": [-100] * len(p) + t}
-
-    veri_seti = Dataset.from_list([{"prompt": c["prompt"], "completion": c["completion"]} for c in ciftler])
-    veri_seti = veri_seti.map(kodla, remove_columns=["prompt", "completion"])
-
-    model = FastLanguageModel.get_peft_model(
-        model, r=arg.lora_r, lora_alpha=arg.lora_r, lora_dropout=0, bias="none", random_state=3407,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        use_gradient_checkpointing="unsloth")
-
-    egitim_sonu = bas + arg.sure_saat * 3600 - min(2.5 * 3600, 0.4 * arg.sure_saat * 3600)   # dönüştürme ve sınav payı
-
-    class SureSiniri(TrainerCallback):
-        def on_step_end(self, args, state, control, **kw):
-            if time.monotonic() > egitim_sonu:
-                bildir("Süre bütçesi doldu; eğitim burada tamamlanıyor")
-                control.should_training_stop = True
-            return control
-
-    bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    toplam_adim = max(1, int(len(veri_seti) * arg.epoch / 8))
-    ayar = TrainingArguments(                                   # transformers 5: warmup_ratio yok, adım verilir
-        output_dir=str(GECICI / "egitim"), per_device_train_batch_size=1, gradient_accumulation_steps=8,
-        num_train_epochs=arg.epoch, learning_rate=arg.ogrenme_hizi, warmup_steps=max(1, int(0.03 * toplam_adim)),
-        lr_scheduler_type="cosine",
-        logging_steps=10, save_strategy="no", report_to="none", optim="adamw_8bit", weight_decay=0.01,
-        bf16=bf16, fp16=not bf16, seed=3407, remove_unused_columns=False)
-    egitici = Trainer(model=model, args=ayar, train_dataset=veri_seti,
-                      data_collator=DataCollatorForSeq2Seq(tok, padding=True, label_pad_token_id=-100),
-                      callbacks=[SureSiniri()])
-    sonuc = egitici.train()
-    kayiplar = [x["loss"] for x in egitici.state.log_history if "loss" in x]
-    bildir(f"Eğitim bitti: {sonuc.global_step} adım, kayıp {kayiplar[0]:.3f} → {kayiplar[-1]:.3f}"
-           if kayiplar else "Eğitim bitti")
+    # Eğitim: iki kart varsa DDP; olmazsa tek kart. Dönüştürme ve sınav payı ayrılır.
+    pay = min(2.5 * 3600, 0.4 * arg.sure_saat * 3600)
+    egitim_bitis = bitis_duvar - pay
+    uyarlayici, istatistik = GECICI / "lora", GECICI / "egitim_istatistik.json"
+    kart = gpu_sayisi()
+    for n in ([kart, 1] if kart > 1 else [1]):
+        shutil.rmtree(uyarlayici, ignore_errors=True)
+        istatistik.unlink(missing_ok=True)
+        if time.time() > egitim_bitis - 600:
+            break
+        ortam = {**os.environ}
+        ortam.pop("CUDA_VISIBLE_DEVICES", None)
+        betik = [str(Path(__file__).resolve()), "ogren", "--model", hf_kimlik, "--veri", str(veri_dosyasi),
+                 "--cikti", str(uyarlayici), "--istatistik", str(istatistik), "--bitis", str(egitim_bitis),
+                 "--epoch", str(arg.epoch), "--ogrenme-hizi", str(arg.ogrenme_hizi), "--lora-r", str(arg.lora_r),
+                 "--en-cok-belirtec", str(arg.en_cok_belirtec), "--dort-bit", arg.dort_bit,
+                 "--ornek-sn", str(arg.ornek_sn)]
+        if n > 1:
+            komut = [sys.executable, "-m", "torch.distributed.run", "--standalone", f"--nproc_per_node={n}"] + betik
+        else:
+            ortam["CUDA_VISIBLE_DEVICES"] = "0"
+            komut = [sys.executable] + betik
+        bildir(f"Eğitim {n} kartta başlıyor")
+        r = subprocess.run(komut, env=ortam)
+        if r.returncode == 0 and (uyarlayici / "adapter_config.json").is_file():
+            break
+        bildir(f"{n} kartlı eğitim başarısız (çıkış {r.returncode})" + ("; tek kartla yeniden" if n > 1 else ""))
+    if not (uyarlayici / "adapter_config.json").is_file():
+        raise SystemExit("Eğitim tamamlanamadı (uyarlayıcı yok)")
+    ist = json.loads(istatistik.read_text("utf-8")) if istatistik.is_file() else {}
+    kayiplar = ist.get("kayip", [])
+    bildir(f"Eğitim bitti: {ist.get('adim', '?')} adım, {ist.get('kart', '?')} kart, "
+           f"{ist.get('epoch', '?')} dönem, örnek başına {ist.get('ornek_sn', '?')} sn"
+           + (f", kayıp {kayiplar[0]:.3f} → {kayiplar[-1]:.3f}" if kayiplar else ""))
 
     # GGUF'a dönüştürme
     surum = arg.surum or datetime.now().strftime("%Y%m%d")
@@ -463,57 +441,141 @@ def egit(arg) -> None:
     hedef = model_k / f"{kimlik}.gguf"
     bin_k = llama_hazirla(gpu=True)
     birlesik = GECICI / "birlesik"
-    try:
-        temiz_birlestir(model, tokenizer, hf_kimlik, birlesik, dort_bit)
-        kaynak_llama = GECICI / "llama.cpp"
-        if not kaynak_llama.is_dir():
-            sh(f"git clone --depth 1 https://github.com/ggml-org/llama.cpp {kaynak_llama}")
-        sh(f"{sys.executable} -m pip install -q {kaynak_llama / 'gguf-py'} sentencepiece protobuf")
-        f16 = GECICI / f"{kimlik}-f16.gguf"
-        sh(f"{sys.executable} {kaynak_llama / 'convert_hf_to_gguf.py'} {birlesik} --outtype f16 --outfile {f16}")
-        sh(f"LD_LIBRARY_PATH={bin_k} {bin_k / 'llama-quantize'} {f16} {hedef} Q4_K_M")
-        f16.unlink(missing_ok=True)
-    except Exception as e:  # noqa: BLE001 - Unsloth'un kendi dönüştürücüsüyle yeniden dene
-        bildir(f"Dönüştürme yedek yolla deneniyor ({e})")
-        model.save_pretrained_gguf(str(GECICI / "gguf"), tokenizer, quantization_method="q4_k_m")
-        aday = [p for p in (GECICI / "gguf").rglob("*.gguf") if "mmproj" not in p.name.lower()]
-        shutil.move(str(max(aday, key=lambda p: p.stat().st_size)), hedef)
-    bildir(f"GGUF: {hedef.name} ({hedef.stat().st_size / 1e9:.2f} GB)")
-    del model, egitici
-    gc.collect()
-    torch.cuda.empty_cache()
+    temiz_birlestir(uyarlayici, hf_kimlik, birlesik)
+    kaynak_llama = GECICI / "llama.cpp"
+    if not kaynak_llama.is_dir():
+        sh(f"git clone --depth 1 https://github.com/ggml-org/llama.cpp {kaynak_llama}")
+    sh(f"{sys.executable} -m pip install -q {kaynak_llama / 'gguf-py'} sentencepiece protobuf")
+    f16 = GECICI / f"{kimlik}-f16.gguf"
+    sh(f"{sys.executable} {kaynak_llama / 'convert_hf_to_gguf.py'} {birlesik} --outtype f16 --outfile {f16}")
+    sh(f"{bin_k / 'llama-quantize'} {f16} {hedef} Q4_K_M", env=llama_ortami(bin_k))
+    f16.unlink(missing_ok=True)
     shutil.rmtree(birlesik, ignore_errors=True)
-    os.environ.pop("CUDA_VISIBLE_DEVICES", None)               # sınav sunucusu bütün kartları görsün
+    bildir(f"GGUF: {hedef.name} ({hedef.stat().st_size / 1e9:.2f} GB)")
 
     # Sınav: temel model ile eğitilen model, eğitimde hiç görülmemiş sorularda, programın karnesiyle
+    sinav_bitis = time.monotonic() + max(600.0, bitis_duvar - time.time() - 15 * 60)
     karne_temel, karne_yeni, kapi_sonucu = sina(veri_k, bin_k, katalog_modeli(katalog_kimlik), hedef, arg.sinav,
-                                                 bas + arg.sure_saat * 3600 - 15 * 60)
+                                                 sinav_bitis)
     bilgi = {
         "kimlik": kimlik, "ad": f"Akıl Hocası {arg.ogrenci} (Kaggle eğitimli, {surum})", "tur": "sohbet",
         "baglam": 8192, "dusunme": False, "temel": katalog_kimlik, "en_az_bellek_gb": bellek,
         "oncelik": 80 if kapi_sonucu[0] else 0, "dosya": hedef.name,
         "egitim": {"tarih": datetime.now().isoformat(timespec="seconds"), "ornek": len(ciftler),
-                   "adim": sonuc.global_step, "kayip": [round(kayiplar[0], 3), round(kayiplar[-1], 3)] if kayiplar else [],
+                   "adim": ist.get("adim", 0), "dongu": ist.get("epoch"), "kart": ist.get("kart"),
+                   "kayip": [round(kayiplar[0], 3), round(kayiplar[-1], 3)] if kayiplar else [],
                    "karne_temel": karne_temel, "karne_yeni": karne_yeni, "kapi": kapi_sonucu[0],
-                   "gerekce": kapi_sonucu[1], "program": _surum()}}
+                   "gerekce": kapi_sonucu[1], "program": _surum(), "sure_dk": round((time.monotonic() - bas) / 60)}}
     (model_k / f"{kimlik}.json").write_text(json.dumps(bilgi, ensure_ascii=False, indent=1), "utf-8")
     rapor_yaz(model_k / "EGITIM_RAPORU.md", bilgi, secilen)
     bildir(("Gelişim kapısı GEÇİLDİ" if kapi_sonucu[0] else "Gelişim kapısı geçilemedi") + f": {kapi_sonucu[1]}")
     bildir(f"Çıktı: {model_k} (Output sekmesinden indirip Zekâ › Eğitilmiş modeli ekle ile yükleyin)")
 
 
-def temiz_birlestir(model, tokenizer, hf_kimlik: str, hedef: Path, dort_bit: bool) -> None:
-    """LoRA'yı asıl (16 bit) tabana birleştirir. 4 bit eğitimde birleştirme CPU'da, orijinal ağırlıklarla yapılır;
-    olmazsa Unsloth'un kendi birleştirmesine dönülür."""
-    if not dort_bit:
-        model.save_pretrained_merged(str(hedef), tokenizer, save_method="merged_16bit")
-        return
+def belirtecleyici(hf_kimlik: str):
+    """Yalnız metin belirteçleyicisi (model yüklenmez; ana süreç kartı boş bırakır)."""
+    from transformers import AutoProcessor, AutoTokenizer
+    try:
+        return AutoTokenizer.from_pretrained(hf_kimlik)
+    except Exception:  # noqa: BLE001
+        p = AutoProcessor.from_pretrained(hf_kimlik)
+        return getattr(p, "tokenizer", p)
+
+
+def llama_ortami(bin_k: Path) -> dict:
+    """llama.cpp araçları için ortam: derleme kütüphaneleri öne eklenir, mevcut yol (CUDA sürücüsü) korunur."""
+    return {**os.environ, "LD_LIBRARY_PATH": f"{bin_k}:{os.environ.get('LD_LIBRARY_PATH', '')}"}
+
+
+def ogren(arg) -> None:
+    """Eğitim süreci (torchrun ile her kartta bir tane). 4 bit taban + LoRA; süre dolunca bütün süreçler aynı adımda
+    durur; 0. süreç uyarlayıcıyı ve istatistiği kaydeder."""
+    import torch
+    import torch.distributed as dist
+    from unsloth import FastLanguageModel  # noqa: I001 - unsloth, transformers'tan önce yüklenmeli
+    from transformers import DataCollatorForSeq2Seq, Trainer, TrainerCallback, TrainingArguments
+    from datasets import Dataset
+    sira, dunya = int(os.environ.get("LOCAL_RANK", 0)), int(os.environ.get("WORLD_SIZE", 1))
+    if dunya > 1:
+        torch.cuda.set_device(sira)
+    ana = int(os.environ.get("RANK", 0)) == 0
+    kart_gb = torch.cuda.get_device_properties(0).total_memory / 2**30
+    dort_bit = arg.dort_bit == "evet" or (arg.dort_bit == "oto" and kart_gb < 20)
+    if ana:
+        bildir(f"Eğitim kipi: {'4 bit taban (QLoRA)' if dort_bit else '16 bit taban (LoRA)'}; {dunya} kart, {kart_gb:.1f} GB")
+    ek = {"device_map": {"": f"cuda:{sira}"}} if dunya > 1 else {}
+    model, tokenizer = FastLanguageModel.from_pretrained(model_name=arg.model, max_seq_length=arg.en_cok_belirtec,
+                                                         load_in_4bit=dort_bit, load_in_16bit=not dort_bit,
+                                                         full_finetuning=False, **ek)
+    tok = getattr(tokenizer, "tokenizer", tokenizer)
+    ciftler = [json.loads(s) for s in Path(arg.veri).read_text("utf-8").splitlines() if s.strip()]
+
+    def kodla(c):
+        p = tok(c["prompt"], add_special_tokens=False)["input_ids"]
+        t = tok(c["completion"] + "<|im_end|>", add_special_tokens=False)["input_ids"]
+        return {"input_ids": p + t, "attention_mask": [1] * (len(p) + len(t)), "labels": [-100] * len(p) + t}
+
+    veri_seti = Dataset.from_list([{"prompt": c["prompt"], "completion": c["completion"]} for c in ciftler])
+    veri_seti = veri_seti.map(kodla, remove_columns=["prompt", "completion"])
+    model = FastLanguageModel.get_peft_model(
+        model, r=arg.lora_r, lora_alpha=arg.lora_r, lora_dropout=0, bias="none", random_state=3407,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        use_gradient_checkpointing="unsloth")
+
+    # Dönem sayısı süreye sığdırılır (kosinüs takvimi tamamlansın): örnek başına süre denemeden ölçüldü.
+    kalan = max(600.0, arg.bitis - time.time())
+    sigan = kalan / max(1.0, len(veri_seti) * arg.ornek_sn / dunya)
+    donem = round(min(arg.epoch, max(0.3, 0.9 * sigan)), 2)
+    birikim = max(1, 8 // dunya)
+    toplam_adim = max(1, int(len(veri_seti) * donem / (birikim * dunya)))
+    if ana:
+        bildir(f"{len(veri_seti)} örnek, {donem} dönem ({toplam_adim} adım, etkin parti {birikim * dunya}); "
+               f"kalan süre {kalan / 3600:.1f} saat")
+
+    class SureSiniri(TrainerCallback):
+        def on_step_end(self, args, state, control, **kw):
+            dur = torch.tensor([1.0 if time.time() > arg.bitis else 0.0], device=f"cuda:{sira}")
+            if dunya > 1:
+                dist.all_reduce(dur, op=dist.ReduceOp.MAX)          # bütün süreçler aynı adımda dursun
+            if dur.item() > 0:
+                if ana:
+                    bildir("Süre bütçesi doldu; eğitim burada tamamlanıyor")
+                control.should_training_stop = True
+            return control
+
+    bf16 = torch.cuda.get_device_capability(sira)[0] >= 8      # T4 (7.5): bf16 yok; Unsloth qwen3_5'i fp32 hesaplar
+    ayar = TrainingArguments(
+        output_dir=str(GECICI / "egitim"), per_device_train_batch_size=1, gradient_accumulation_steps=birikim,
+        num_train_epochs=donem, learning_rate=arg.ogrenme_hizi, warmup_steps=max(1, int(0.03 * toplam_adim)),
+        lr_scheduler_type="cosine", logging_steps=5, save_strategy="no", report_to="none", optim="adamw_8bit",
+        weight_decay=0.01, bf16=bf16, fp16=False, seed=3407, remove_unused_columns=False,
+        ddp_find_unused_parameters=False if dunya > 1 else None)
+    egitici = Trainer(model=model, args=ayar, train_dataset=veri_seti,
+                      data_collator=DataCollatorForSeq2Seq(tok, padding=True, label_pad_token_id=-100),
+                      callbacks=[SureSiniri()])
+    bas = time.time()
+    sonuc = egitici.train()
+    if ana:
+        kayiplar = [x["loss"] for x in egitici.state.log_history if "loss" in x]
+        gecen = time.time() - bas
+        islenen = sonuc.global_step * birikim * dunya
+        model.save_pretrained(arg.cikti)
+        tokenizer.save_pretrained(arg.cikti)
+        Path(arg.istatistik).write_text(json.dumps({
+            "adim": sonuc.global_step, "kayip": kayiplar, "kart": dunya, "epoch": round(islenen / len(veri_seti), 2),
+            "ornek_sn": round(gecen * dunya / max(1, islenen), 1)}, ensure_ascii=False), "utf-8")
+        bildir(f"Uyarlayıcı kaydedildi: {sonuc.global_step} adım, {gecen / 60:.0f} dk")
+    if dunya > 1:
+        dist.barrier()
+        dist.destroy_process_group()
+
+
+def temiz_birlestir(uyarlayici: Path, hf_kimlik: str, hedef: Path) -> None:
+    """LoRA'yı asıl (16 bit) tabana CPU'da birleştirir: 4 bit eğitimin nicemleme hatası modele işlenmez. Olmazsa
+    Unsloth ile uyarlayıcıdan birleştirilir."""
     import torch
     import transformers
     from peft import PeftModel
-    uyarlayici = GECICI / "lora"
-    model.save_pretrained(str(uyarlayici))
-    tokenizer.save_pretrained(str(uyarlayici))
     taban = None
     for sinif in ("AutoModelForImageTextToText", "AutoModelForCausalLM"):
         try:
@@ -528,12 +590,20 @@ def temiz_birlestir(model, tokenizer, hf_kimlik: str, hedef: Path, dort_bit: boo
         birlesik = PeftModel.from_pretrained(taban, str(uyarlayici)).merge_and_unload()
         hedef.mkdir(parents=True, exist_ok=True)
         birlesik.save_pretrained(str(hedef), safe_serialization=True)
-        tokenizer.save_pretrained(str(hedef))
+        for sinif in ("AutoProcessor", "AutoTokenizer"):
+            try:
+                getattr(transformers, sinif).from_pretrained(str(uyarlayici)).save_pretrained(str(hedef))
+                break
+            except Exception:  # noqa: BLE001
+                continue
         bildir("LoRA asıl 16 bit tabana CPU'da birleştirildi")
         del birlesik, taban
     except Exception as e:  # noqa: BLE001
         bildir(f"Temiz birleştirme olmadı ({type(e).__name__}: {str(e)[:200]}); Unsloth birleştirmesi kullanılıyor")
         shutil.rmtree(hedef, ignore_errors=True)
+        from unsloth import FastLanguageModel
+        model, tokenizer = FastLanguageModel.from_pretrained(model_name=str(uyarlayici), load_in_4bit=False,
+                                                             load_in_16bit=True)
         model.save_pretrained_merged(str(hedef), tokenizer, save_method="merged_16bit")
 
 
@@ -668,10 +738,24 @@ def main() -> None:
                    help="taban model eğitimde 4 bit (QLoRA); oto: 20 GB'tan küçük kartta")
     e.add_argument("--sinav", type=int, default=150, help="sınavda kullanılacak en çok soru")
     e.add_argument("--surum", default="")
+    e.add_argument("--ornek-sn", type=float, default=16.0,
+                   help="tek kartta örnek başına eğitim süresi tahmini (dönem sayısını süreye sığdırmak için)")
+    o = alt.add_parser("ogren", help="(iç) eğitim süreci; egit tarafından torchrun ile başlatılır")
+    o.add_argument("--model", required=True)
+    o.add_argument("--veri", required=True)
+    o.add_argument("--cikti", required=True)
+    o.add_argument("--istatistik", required=True)
+    o.add_argument("--bitis", type=float, required=True, help="duvar saati (time.time) cinsinden son an")
+    o.add_argument("--epoch", type=float, default=2)
+    o.add_argument("--ogrenme-hizi", type=float, default=1e-4)
+    o.add_argument("--lora-r", type=int, default=32)
+    o.add_argument("--en-cok-belirtec", type=int, default=6144)
+    o.add_argument("--dort-bit", choices=["oto", "evet", "hayir"], default="oto")
+    o.add_argument("--ornek-sn", type=float, default=16.0)
     arg = p.parse_args()
     GECICI.mkdir(parents=True, exist_ok=True)
     CALISMA.mkdir(parents=True, exist_ok=True)
-    {"veri": veri, "egit": egit}[arg.komut](arg)
+    {"veri": veri, "egit": egit, "ogren": ogren}[arg.komut](arg)
 
 
 if __name__ == "__main__":
