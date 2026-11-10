@@ -213,12 +213,93 @@ def fts_sorgusu(metin: str, ek_terimler: Iterable[str] = ()) -> str:
     return " OR ".join(sonuc)
 
 
+class _OkunmusSonuc:
+    """Kilit altında hemen okunmuş sorgu sonucu; imleç gibi kullanılır (fetchone/fetchall/yineleme, lastrowid)."""
+
+    __slots__ = ("description", "lastrowid", "rowcount", "_satirlar", "_i")
+
+    def __init__(self, imlec: sqlite3.Cursor):
+        self.description = imlec.description
+        self.lastrowid = imlec.lastrowid
+        self.rowcount = imlec.rowcount
+        self._satirlar = imlec.fetchall() if imlec.description else []
+        self._i = 0
+
+    def fetchone(self):
+        if self._i >= len(self._satirlar):
+            return None
+        self._i += 1
+        return self._satirlar[self._i - 1]
+
+    def fetchmany(self, n: int = 1):
+        parca = self._satirlar[self._i:self._i + n]
+        self._i += len(parca)
+        return parca
+
+    def fetchall(self):
+        kalan = self._satirlar[self._i:]
+        self._i = len(self._satirlar)
+        return kalan
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+class GuvenliBaglanti:
+    """İş parçacıkları arasında paylaşılan SQLite bağlantısı. Her sorgu kilit altında çalışır ve sonucu hemen
+    okunur; 'with bağlantı:' işlem bloğu da kilidi tutar. Kilitsiz eşzamanlı okuma, aynı bağlantıda başka bir
+    sorgunun satırını döndürebiliyor ya da 'API misuse' hatası verebiliyordu (danışma ile arka plan gelişim/
+    damıtma aynı anda çalışırken)."""
+
+    def __init__(self, baglanti: sqlite3.Connection, kilit):
+        object.__setattr__(self, "_b", baglanti)
+        object.__setattr__(self, "_kilit", kilit)
+
+    def execute(self, sql: str, parametreler=()):
+        with self._kilit:
+            return _OkunmusSonuc(self._b.execute(sql, parametreler))
+
+    def executemany(self, sql: str, dizi):
+        with self._kilit:
+            return _OkunmusSonuc(self._b.executemany(sql, dizi))
+
+    def executescript(self, betik: str):
+        with self._kilit:
+            return self._b.executescript(betik)
+
+    def commit(self) -> None:
+        with self._kilit:
+            self._b.commit()
+
+    def __enter__(self):
+        self._kilit.acquire()
+        try:
+            self._b.__enter__()
+        except BaseException:
+            self._kilit.release()
+            raise
+        return self
+
+    def __exit__(self, *hata):
+        try:
+            return self._b.__exit__(*hata)
+        finally:
+            self._kilit.release()
+
+    def __getattr__(self, ad: str):
+        return getattr(self._b, ad)
+
+    def __setattr__(self, ad: str, deger) -> None:
+        setattr(self._b, ad, deger)
+
+
 class Kutuphane:
     def __init__(self, yol: Path | str):
         self.yol = str(yol)
         self._kilit = threading.RLock()
-        self.db = sqlite3.connect(self.yol, check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
+        baglanti = sqlite3.connect(self.yol, check_same_thread=False)
+        baglanti.row_factory = sqlite3.Row
+        self.db = GuvenliBaglanti(baglanti, self._kilit)
         self.db.executescript(SEMA)
 
     # ------------------------------------------------------------------ belgeler

@@ -211,3 +211,32 @@ def test_sohbet_baglami_cevap_cozumlemesinden_beslenir():
     coz = kurallarla_coz("Peki bu süre uzatılabilir mi?", b)          # devam sorusu: statü önceki turdan gelir
     assert coz.personel_turu == "657/4-A memur"
     assert "ÖNCEKİ KONUŞMA" in b.metin()
+
+
+def test_paylasilan_baglanti_eszamanli_guvenli(tmp_path):
+    """Aynı kütüphane bağlantısını kullanan iş parçacıkları birbirinin satırını almamalı (eskiden 'API misuse')."""
+    import threading
+
+    from akil_hocasi.library.db import Kutuphane
+    k = Kutuphane(tmp_path / "e.db")
+    with k._kilit, k.db:
+        k.db.execute("CREATE TABLE t(a INTEGER, b TEXT)")
+        k.db.executemany("INSERT INTO t VALUES(?,?)", [(i, f"s{i}") for i in range(200)])
+    hatalar = []
+
+    def calis(n):
+        try:
+            for _ in range(300):
+                r = k.db.execute("SELECT a, b FROM t WHERE a=?", (n,)).fetchone()
+                assert r is not None and r["a"] == n and r["b"] == f"s{n}"
+                assert len(k.db.execute("SELECT a FROM t WHERE a < ?", (n + 1,)).fetchall()) == n + 1
+        except Exception as e:  # noqa: BLE001
+            hatalar.append(repr(e))
+
+    isler = [threading.Thread(target=calis, args=(i * 17 % 200,)) for i in range(8)]
+    for x in isler:
+        x.start()
+    for x in isler:
+        x.join()
+    assert not hatalar, hatalar[:3]
+    assert k.db.execute("INSERT INTO t VALUES(999,'x')").lastrowid

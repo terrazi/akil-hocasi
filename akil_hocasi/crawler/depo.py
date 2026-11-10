@@ -23,6 +23,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from ..core.turkce import katla
+from ..library.db import GuvenliBaglanti
 
 UZANTI = {"pdf": ".pdf", "docx": ".docx", "docm": ".docm", "xlsx": ".xlsx", "xlsm": ".xlsm",
           "doc": ".doc", "xls": ".xls", "odt": ".odt", "ods": ".ods", "html": ".html", "pptx": ".pptx"}
@@ -152,8 +153,9 @@ class BelgeDeposu:
         self.kok.mkdir(parents=True, exist_ok=True)
         self.disk_siniri = disk_siniri_mb * 1024 * 1024
         self._kilit = threading.RLock()
-        self.db = sqlite3.connect(str(self.kok / "depo.db"), check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
+        baglanti = sqlite3.connect(str(self.kok / "depo.db"), check_same_thread=False)
+        baglanti.row_factory = sqlite3.Row
+        self.db = GuvenliBaglanti(baglanti, self._kilit)        # tarayıcı ve arayüz aynı anda kullanır
         self.db.executescript(_SEMA)
 
     def kaydet(self, icerik: bytes, url: str, *, kod: str = "", ad: str = "", sayfa_url: str = "",

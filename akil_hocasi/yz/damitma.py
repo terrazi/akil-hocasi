@@ -217,7 +217,7 @@ def _cumle_anahtari(metin: str) -> str:
     return re.sub(r"\s+", " ", metni_maskele(str(metin).strip())).strip()
 
 
-def dogrulanmis_taslak(v: dict, cikan: set[str]) -> tuple[dict, int, int]:
+def dogrulanmis_taslak(v: dict, cikan) -> tuple[dict, int, int]:
     """Taslaktan sınamada çıkarılan cümleleri atar. (ayıklanmış taslak, cümle sayısı, atılan) döner."""
     yeni, toplam, atilan = dict(v), 0, 0
     for b in _BOLUMLER:
@@ -327,8 +327,8 @@ class Damitici:
             sonuc = asil(cevap)
             toplanan = getattr(yerel, "cikan", None)
             if toplanan is not None:
-                toplanan.update(_cumle_anahtari(x.get("metin", ""))
-                                for x in (getattr(cevap, "denetim", None) or {}).get("cikarilanlar", []))
+                for x in (getattr(cevap, "denetim", None) or {}).get("cikarilanlar", []):
+                    toplanan.setdefault(_cumle_anahtari(x.get("metin", "")), x)
             return sonuc
 
         d.dogrula = izlenen
@@ -415,13 +415,13 @@ class Damitici:
         """Bir soruyu programın danışma hattında öğretmenle cevaplar, çağrıları sınar ve kaydeder."""
         from ..ogrenme.degerlendirme import altin_sonucu
         bolum = bolum_sec(h["soru"])
-        self._yerel.cikan = set()
+        self._yerel.cikan = {}                        # cümle anahtarı → sınamanın çıkarma kaydı
         try:
             with self.ogretmen.kayit() as kayit:
                 c = self.s.hat.cevapla(h["soru"], "derin", kayit=False)
         except Exception as e:  # noqa: BLE001
             self.rapor.say(self.rapor.atilan, "hata")
-            log.warning("Soru işlenemedi: %s", e)
+            log.warning("Soru işlenemedi: %s", e, exc_info=True)
             self._yaz([], h["id"])
             return
         finally:
@@ -496,7 +496,7 @@ class Damitici:
                                   "alintiya": bool(den.get("alintiya_donus")), "cikan_cumle": len(cikan),
                                   "dogrudan": (v or {}).get("dogrudan_cevap"),
                                   "kisa_cevap": len((v or {}).get("kisa_cevap") or [])})
-        for x in den.get("cikarilanlar", [])[:8]:
+        for x in list(cikan.values())[:8]:             # bütün sınama turlarında çıkarılan cümleler (son tur değil)
             hatalar.append(f"[{x.get('test', '')}] {x.get('metin', '')[:160]} — {x.get('neden', '')[:120]}")
         if temiz:
             self.rapor.gecen_cevap += 1
