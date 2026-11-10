@@ -93,8 +93,10 @@ def kaggle(*argumanlar: str, yakala: bool = False) -> str:
     return c.stdout
 
 
-def kimlik(asama: str, tur: int) -> str:
-    return f"{kullanici()}/akilhocasi-veri-{tur}" if asama == "veri" else f"{kullanici()}/akilhocasi-egitim"
+def kimlik(asama: str, tur: int, veri_turu: int = 1) -> str:
+    if asama == "veri":
+        return f"{kullanici()}/akilhocasi-veri-{tur}"
+    return f"{kullanici()}/akilhocasi-egitim" + ("-deneme" if veri_turu == 0 else "")
 
 
 def defter_hazirla(asama: str, ayarlar: dict[str, object]) -> dict:
@@ -140,7 +142,7 @@ def derleme_paylas(cikti: Path) -> None:
 
 
 def baslat(arg) -> None:
-    k = kimlik(arg.asama, arg.tur)
+    k = kimlik(arg.asama, arg.tur, arg.veri_turu)
     klasor = Path("kaggle_gonder") / k.split("/")[1]
     shutil.rmtree(klasor, ignore_errors=True)
     klasor.mkdir(parents=True)
@@ -148,8 +150,9 @@ def baslat(arg) -> None:
         ayar = {"SURE_SAAT": arg.sure_saat, "SORU": arg.soru, "PARALEL": arg.paralel, "TARAMA_DK": arg.tarama_dk}
         girdiler = [f"{kullanici()}/akilhocasi-veri-{i}" for i in range(1, arg.tur)]
     else:
-        ayar = {"OGRENCI": arg.ogrenci, "SURE_SAAT": arg.sure_saat, "EPOCH": arg.epoch}
-        girdiler = [f"{kullanici()}/akilhocasi-veri-{i}" for i in range(1, arg.veri_turu + 1)]
+        ayar = {"OGRENCI": arg.ogrenci, "SURE_SAAT": arg.sure_saat, "EPOCH": arg.epoch, "SINAV": arg.sinav}
+        girdiler = [f"{kullanici()}/akilhocasi-veri-{i}" for i in range(1, arg.veri_turu + 1)] \
+            or [f"{kullanici()}/akilhocasi-veri-0"]              # veri turu 0: eğitim hattının denemesi
     defter = defter_hazirla(arg.asama, ayar)
     dosya = f"{k.split('/')[1]}.ipynb"
     (klasor / dosya).write_text(json.dumps(defter, ensure_ascii=False), "utf-8")
@@ -165,7 +168,7 @@ def baslat(arg) -> None:
 
 
 def durum(arg) -> None:
-    k = kimlik(arg.asama, arg.tur)
+    k = kimlik(arg.asama, arg.tur, arg.veri_turu)
     cikti = kaggle("kernels", "status", k, yakala=True)
     print(f"Defter: https://www.kaggle.com/code/{k}")
     durum_metni = cikti.lower()
@@ -235,6 +238,7 @@ def main() -> None:
     p.add_argument("--tarama-dk", type=float, default=40)
     p.add_argument("--ogrenci", default="4B")
     p.add_argument("--epoch", type=float, default=2)
+    p.add_argument("--sinav", type=int, default=150, help="eğitim sonrası sınavdaki en çok soru")
     p.add_argument("--veri-seti", nargs="*", default=[], help="kullanıcı eğitim paketi veri seti (kullanici/ad)")
     arg = p.parse_args()
     {"baslat": baslat, "durum": durum, "dogrula": dogrula}[arg.islem](arg)

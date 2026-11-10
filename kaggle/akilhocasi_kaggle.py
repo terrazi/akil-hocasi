@@ -321,10 +321,11 @@ def gunluk_kopyala(hedef: Path, satir: int = 400) -> None:
             pass
 
 
-def onceki_veriler() -> list[Path]:
-    """Girdilerdeki önceki veri turlarının klasörleri (eskiden yeniye). Deneme turunun (tur 0) verisi
-    birleştirilmez; ondan yalnız llama.cpp derlemesi alınır."""
-    return sorted({p.parent for p in girdide_bul(f"{VERI_ADI}/manifest.json") if "akilhocasi-veri-0" not in str(p)},
+def onceki_veriler(deneme: bool = False) -> list[Path]:
+    """Girdilerdeki önceki veri turlarının klasörleri (eskiden yeniye). Deneme turunun (tur 0) verisi asıl
+    turlarla birleştirilmez; yalnız eğitim hattının denemesinde (başka veri yokken) kullanılır."""
+    return sorted({p.parent for p in girdide_bul(f"{VERI_ADI}/manifest.json")
+                   if deneme or "akilhocasi-veri-0" not in str(p)},
                   key=lambda d: (d / "manifest.json").stat().st_mtime)
 
 
@@ -359,7 +360,7 @@ def _surum() -> str:
 # ---------------------------------------------------------------------------- 2) eğitim
 def _veri_klasorleri() -> list[Path]:
     yerel = CALISMA / VERI_ADI
-    turlar = onceki_veriler() + ([yerel] if (yerel / "ornekler.jsonl").is_file() else [])
+    turlar = (onceki_veriler() or onceki_veriler(deneme=True)) + ([yerel] if (yerel / "ornekler.jsonl").is_file() else [])
     if not turlar:
         raise SystemExit("Eğitim verisi bulunamadı: 1. defterin çıktısını 'Add Input' ile bu deftere ekleyin.")
     return turlar
@@ -423,7 +424,7 @@ def egit(arg) -> None:
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         use_gradient_checkpointing="unsloth")
 
-    egitim_sonu = bas + arg.sure_saat * 3600 - 2.5 * 3600            # dönüştürme ve sınav payı
+    egitim_sonu = bas + arg.sure_saat * 3600 - min(2.5 * 3600, 0.4 * arg.sure_saat * 3600)   # dönüştürme ve sınav payı
 
     class SureSiniri(TrainerCallback):
         def on_step_end(self, args, state, control, **kw):
@@ -493,46 +494,85 @@ def egit(arg) -> None:
     bildir(f"Çıktı: {model_k} (Output sekmesinden indirip Zekâ › Eğitilmiş modeli ekle ile yükleyin)")
 
 
+def gpu_sayisi() -> int:
+    try:
+        c = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=30)
+        return max(1, sum(1 for s in c.stdout.splitlines() if s.startswith("GPU")))
+    except (OSError, subprocess.SubprocessError):
+        return 1
+
+
 def sina(veri_k: Path, bin_k: Path, temel: Path, yeni: Path, sinir: int, bitis: float):
-    from akil_hocasi.cekirdek.gelisim import GelisimDongusu
-    from akil_hocasi.cekirdek.karne import kapi
+    """Temel ve eğitilmiş modeli aynı sorularda, aynı anda (her biri kendi kartında) programın karnesiyle sınar.
+    Süre biterse karşılaştırma iki modelin de cevapladığı ortak sorularla yapılır (adil kıyas)."""
+    from akil_hocasi.cekirdek.karne import kapi, karne_hesapla
     from akil_hocasi.library.db import Kutuphane
+    from akil_hocasi.ogrenme.degerlendirme import altin_sonucu
     from akil_hocasi.yz.sunucu import SunucuModeli
     sorular = []
     if (veri_k / "sinav.jsonl").is_file():
         for satir in (veri_k / "sinav.jsonl").read_text("utf-8").splitlines():
             try:
                 x = json.loads(satir)
-                sorular.append({"soru": x["soru"], "beklenen_dayanak": x.get("beklenen_dayanak", []),
-                                "beklenen_ifade": ""})
+                sorular.append({"soru": x["soru"], "beklenen_dayanak": x.get("beklenen_dayanak", [])})
             except (ValueError, KeyError):
                 continue
     sorular = sorular[:sinir]
+    bildir(f"Sınav: {len(sorular)} görülmemiş soru, temel ve eğitilmiş model aynı anda")
     k = Kutuphane(veri_k / "kutuphane.db")
     anlam, sa = None, None
     try:
         anlam, sa = anlam_kur(k, bin_k)
     except Exception as e:  # noqa: BLE001
         bildir(f"Anlam araması olmadan sınanıyor ({e})")
-    s = servisler(k, anlam)
-    sonuclar = []
-    pay = (bitis - time.monotonic()) / 2
+    kart = gpu_sayisi()
+    sunucular, sonuclar = {}, {}
     try:
-        for ad, yol in (("temel", temel), ("yeni", yeni)):
-            sv = sunucu(yol, "sohbet", bin_k, 8192, 1, ["--jinja"])
+        for i, (ad, yol) in enumerate((("temel", temel), ("yeni", yeni))):
+            onceki = os.environ.get("CUDA_VISIBLE_DEVICES")
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(i % kart)        # her model kendi kartında
             try:
-                s.hat.model = SunucuModeli(sv, ad, dusunme_destegi=False)
-                g = GelisimDongusu(s.hat, k, s.strateji, s.dersler, bildir)
-                karne = g.sinav(sorular, time.monotonic() + pay)
-                sonuclar.append(karne)
-                bildir(f"Sınav ({ad}): {karne.toplam} soru, başarı %{round(100 * karne.basari)}, "
-                       f"kritik {karne.kritik}, ilke ortalaması {karne.ortalama():.3f}")
+                sunucular[ad] = sunucu(yol, "sohbet", bin_k, 8192, 1, ["--jinja"])
             finally:
-                sv.durdur()
+                if onceki is None:
+                    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+                else:
+                    os.environ["CUDA_VISIBLE_DEVICES"] = onceki
+
+        def calis(ad: str) -> None:
+            s = servisler(k, anlam)
+            s.hat.model = SunucuModeli(sunucular[ad], ad, dusunme_destegi=False)
+            liste = sonuclar.setdefault(ad, [])
+            for n, soru in enumerate(sorular, 1):
+                if time.monotonic() > bitis:
+                    break
+                try:
+                    c = s.hat.cevapla(soru["soru"], "derin", kayit=False)
+                    gecti, kritik = altin_sonucu(c, soru["beklenen_dayanak"], "")
+                    liste.append((c, {"netlestirme": False}, gecti, kritik))
+                except Exception as e:  # noqa: BLE001
+                    bildir(f"Sınav sorusu işlenemedi ({ad}): {e}")
+                    liste.append(None)
+                if n % 25 == 0:
+                    bildir(f"Sınav ({ad}): {n} soru")
+
+        isler = [threading.Thread(target=calis, args=(ad,), daemon=True) for ad in sunucular]
+        for x in isler:
+            x.start()
+        for x in isler:
+            x.join()
     finally:
+        for sv in sunucular.values():
+            sv.durdur()
         if sa:
             sa.durdur()
-    eski, yeni_k = sonuclar
+    n = min(len(sonuclar.get("temel", [])), len(sonuclar.get("yeni", [])))
+    ortak = [i for i in range(n) if sonuclar["temel"][i] is not None and sonuclar["yeni"][i] is not None]
+    eski = karne_hesapla([sonuclar["temel"][i] for i in ortak])
+    yeni_k = karne_hesapla([sonuclar["yeni"][i] for i in ortak])
+    for ad, karne in (("temel", eski), ("yeni", yeni_k)):
+        bildir(f"Sınav ({ad}): {karne.toplam} ortak soru, başarı %{round(100 * karne.basari)}, "
+               f"kritik {karne.kritik}, ilke ortalaması {karne.ortalama():.3f}")
     return eski.sozluk(), yeni_k.sozluk(), kapi(eski, yeni_k)
 
 
