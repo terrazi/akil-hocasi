@@ -414,7 +414,7 @@ def egit(arg) -> None:
     veri_dosyasi.write_text("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in ciftler), "utf-8")
 
     # Eğitim: iki kart varsa DDP; olmazsa tek kart. Dönüştürme ve sınav payı ayrılır.
-    pay = min(1.75 * 3600, 0.4 * arg.sure_saat * 3600)
+    pay = min(arg.sinav_payi_saat * 3600, 0.4 * arg.sure_saat * 3600)
     egitim_bitis = bitis_duvar - pay
     uyarlayici, istatistik = GECICI / "lora", GECICI / "egitim_istatistik.json"
     kart = gpu_sayisi()
@@ -768,6 +768,7 @@ def main() -> None:
                    help="taban model eğitimde 4 bit (QLoRA); oto: 20 GB'tan küçük kartta")
     e.add_argument("--sinav", type=int, default=150, help="sınavda kullanılacak en çok soru")
     e.add_argument("--surum", default="")
+    e.add_argument("--sinav-payi-saat", type=float, default=1.75, help="dönüştürme ve sınava ayrılan saat")
     e.add_argument("--ornek-sn", type=float, default=22.0,
                    help="kart başına örnek eğitim süresi tahmini, sn (T4 QLoRA ölçümü ~22; dönemi süreye sığdırır)")
     o = alt.add_parser("ogren", help="(iç) eğitim süreci; egit tarafından torchrun ile başlatılır")

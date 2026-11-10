@@ -48,7 +48,9 @@ o yordamların istemleriyle ve yalnızca **programın sınamasından geçmiş** 
 
 ### Hazırlık (bir kez)
 - kaggle.com'da hesap açın ve **telefon numaranızı doğrulayın** (GPU ve internet erişimi için gerekli).
-- Kaggle haftada yaklaşık 30 saat GPU verir. Bir eğitim turu yaklaşık 20 saattir.
+- Kaggle'ın haftalık GPU kotası hesaba ve talebe göre değişir (bu hesapta şu an **6 saat**; Cumartesi 03:00'te
+  yenilenir). `dogrula` işlemi kalan kotayı gösterir; `baslat` kota yetmiyorsa uyarır. Kota bitince defter
+  yenilenmeye dek kuyrukta bekler. Bu yüzden bir hafta bir veri turu, ertesi hafta eğitim (≈6 saat) yapılır.
 
 ### 1. defter: veri üretimi (~11 saat)
 1. Bu bağlantıyla defteri açın:

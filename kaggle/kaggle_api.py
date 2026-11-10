@@ -150,12 +150,18 @@ def baslat(arg) -> None:
         ayar = {"SURE_SAAT": arg.sure_saat, "SORU": arg.soru, "PARALEL": arg.paralel, "TARAMA_DK": arg.tarama_dk}
         girdiler = [f"{kullanici()}/akilhocasi-veri-{i}" for i in range(1, arg.tur)]
     else:
-        ayar = {"OGRENCI": arg.ogrenci, "SURE_SAAT": arg.sure_saat, "EPOCH": arg.epoch, "SINAV": arg.sinav}
+        ayar = {"OGRENCI": arg.ogrenci, "SURE_SAAT": arg.sure_saat, "EPOCH": arg.epoch, "SINAV": arg.sinav,
+                "SINAV_PAYI": arg.sinav_payi}
         girdiler = [f"{kullanici()}/akilhocasi-veri-{i}" for i in range(1, arg.veri_turu + 1)] \
             or [f"{kullanici()}/akilhocasi-veri-0"]              # veri turu 0: eğitim hattının denemesi
     defter = defter_hazirla(arg.asama, ayar)
     dosya = f"{k.split('/')[1]}.ipynb"
     (klasor / dosya).write_text(json.dumps(defter, ensure_ascii=False), "utf-8")
+    kalan, yenilenme = kalan_gpu_saat()
+    if kalan is not None:
+        print(f"Kalan GPU kotası: {kalan:.1f} saat (yenilenme {yenilenme}); istenen süre {arg.sure_saat} saat")
+        if kalan < arg.sure_saat:
+            print("UYARI: kota yetmiyor; Kaggle defteri kota yenilenene dek kuyrukta bekletir. Süreyi kotaya sığdırın.")
     veri_setleri = [x for x in arg.veri_seti if x] + ([derleme_veri_seti()] if derleme_hazir() else [])
     meta = {"id": k, "title": k.split("/")[1], "code_file": dosya, "language": "python", "kernel_type": "notebook",
             "is_private": True, "enable_gpu": True, "enable_internet": True, "machine_shape": arg.hizlandirici,
@@ -233,7 +239,7 @@ def dogrula(arg) -> None:
     kota_goster()
 
 
-def kota_goster() -> None:
+def kota_goster() -> dict | None:
     """Hızlandırıcı (GPU) kotası: kullanılan ve kalan süre (yalnız okuma)."""
     try:
         from kaggle.api.kaggle_api_extended import KaggleApi
@@ -246,8 +252,24 @@ def kota_goster() -> None:
         veri = yanit.to_dict() if hasattr(yanit, "to_dict") else {a: getattr(yanit, a) for a in dir(yanit)
                                                                     if not a.startswith("_")}
         print("GPU KOTASI:", json.dumps(veri, ensure_ascii=False, default=str)[:3000])
+        return veri
     except Exception as e:  # noqa: BLE001
         print(f"(kota bilgisi alınamadı: {type(e).__name__}: {e})")
+        return None
+
+
+def kalan_gpu_saat() -> tuple[float | None, str]:
+    """(Kalan GPU saati, yenilenme zamanı). Kaggle kotası haftalıktır; oturum bitince düşülür."""
+    veri = kota_goster() or {}
+    g = veri.get("gpuQuota") or {}
+
+    def sn(x) -> float:
+        m = re.match(r"^(\d+(?:\.\d+)?)", str(x or "0"))
+        return float(m.group(1)) if m else 0.0
+    if not g:
+        return None, ""
+    return (sn(g.get("totalTimeAllowed")) - sn(g.get("timeUsed")) - sn(g.get("timeReserved"))) / 3600, \
+        str(veri.get("quotaRefreshTime", ""))
 
 
 def main() -> None:
@@ -265,6 +287,7 @@ def main() -> None:
     p.add_argument("--hizlandirici", default="NvidiaTeslaT4", choices=["NvidiaTeslaT4", "NvidiaTeslaP100"],
                    help="T4 x2 (varsayılan; eğitim iki kartta) ya da P100 (tek kart; T4 kuyruğu uzunsa)")
     p.add_argument("--sinav", type=int, default=150, help="eğitim sonrası sınavdaki en çok soru")
+    p.add_argument("--sinav-payi", type=float, default=1.75, help="dönüştürme ve sınava ayrılan saat")
     p.add_argument("--veri-seti", nargs="*", default=[], help="kullanıcı eğitim paketi veri seti (kullanici/ad)")
     arg = p.parse_args()
     {"baslat": baslat, "durum": durum, "dogrula": dogrula}[arg.islem](arg)
