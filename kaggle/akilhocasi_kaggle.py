@@ -181,6 +181,21 @@ def model_indir(kimlik: str, ad: str, depo: str, desen: str, gb: float, tur: str
     return ModelIndirici(GECICI / "modeller").indir(m, ilerleme)
 
 
+def onceki_egitilmis(ogrenci: str) -> tuple[Path | None, str]:
+    """Programın sürüm sayfasında yayımlanmış, Kaggle kapısını geçmiş en yeni eğitilmiş model (aynı boy)."""
+    try:
+        from akil_hocasi.yz import surum_modeli
+        b = surum_modeli.son_egitilmis()
+        if not b or not (b["bilgi"].get("egitim") or {}).get("kapi"):
+            return None, ""
+        if not b["bilgi"]["kimlik"].startswith(f"akilhocasi-{ogrenci.lower()}-"):
+            return None, ""
+        return surum_modeli.indir(b, GECICI / "onceki"), b["bilgi"]["kimlik"]
+    except Exception as e:  # noqa: BLE001
+        bildir(f"Önceki eğitilmiş model alınamadı ({e}); temel modelle kıyaslanacak")
+        return None, ""
+
+
 def katalog_modeli(kimlik: str) -> Path:
     from akil_hocasi.yz.indirici import ModelIndirici
     from akil_hocasi.yz.katalog import Katalog
@@ -453,16 +468,22 @@ def egit(arg) -> None:
     sh(f"{bin_k / 'llama-quantize'} {f16} {hedef} Q4_K_M", env=llama_ortami(bin_k))
     f16.unlink(missing_ok=True)
     shutil.rmtree(birlesik, ignore_errors=True)
+    shutil.copytree(uyarlayici, model_k / "lora", dirs_exist_ok=True)   # sonraki turlar isterse buradan sürdürebilir
     bildir(f"GGUF: {hedef.name} ({hedef.stat().st_size / 1e9:.2f} GB)")
 
     # Sınav: temel model ile eğitilen model, eğitimde hiç görülmemiş sorularda, programın karnesiyle
     sinav_bitis = time.monotonic() + max(600.0, bitis_duvar - time.time() - 15 * 60)
-    karne_temel, karne_yeni, kapi_sonucu = sina(veri_k, bin_k, katalog_modeli(katalog_kimlik), hedef, arg.sinav,
-                                                 sinav_bitis)
+    # Kıyas modeli: yayımlanmış ve kapıyı geçmiş önceki eğitilmiş model varsa o (yeni model ondan iyi olmalı),
+    # yoksa katalogdaki temel model. Her yeni tur tabandan, birikmiş bütün veriyle yeniden eğitilir.
+    kiyas_yolu, kiyas_adi = onceki_egitilmis(arg.ogrenci)
+    if kiyas_yolu is None:
+        kiyas_yolu, kiyas_adi = katalog_modeli(katalog_kimlik), katalog_kimlik
+    bildir(f"Kıyas modeli: {kiyas_adi}")
+    karne_temel, karne_yeni, kapi_sonucu = sina(veri_k, bin_k, kiyas_yolu, hedef, arg.sinav, sinav_bitis)
     bilgi = {
         "kimlik": kimlik, "ad": f"Akıl Hocası {arg.ogrenci} (Kaggle eğitimli, {surum})", "tur": "sohbet",
         "baglam": 8192, "dusunme": False, "temel": katalog_kimlik, "en_az_bellek_gb": bellek,
-        "oncelik": 80 if kapi_sonucu[0] else 0, "dosya": hedef.name,
+        "oncelik": 80 if kapi_sonucu[0] else 0, "dosya": hedef.name, "kiyas": kiyas_adi,
         "egitim": {"tarih": datetime.now().isoformat(timespec="seconds"), "ornek": len(ciftler),
                    "adim": ist.get("adim", 0), "dongu": ist.get("epoch"), "kart": ist.get("kart"),
                    "kayip": [round(kayiplar[0], 3), round(kayiplar[-1], 3)] if kayiplar else [],
@@ -697,7 +718,8 @@ def rapor_yaz(yol: Path, bilgi: dict, secilen: list[dict]) -> None:
     from akil_hocasi.cekirdek.ilkeler import ILKELER
     e = bilgi["egitim"]
     t, y = e["karne_temel"], e["karne_yeni"]
-    satirlar = [f"# {bilgi['ad']}", "", f"- Temel model: {bilgi['temel']}", f"- Eğitim örneği: {e['ornek']}",
+    satirlar = [f"# {bilgi['ad']}", "", f"- Temel model: {bilgi['temel']}",
+                f"- Sınavda kıyaslanan: {bilgi.get('kiyas') or bilgi['temel']}", f"- Eğitim örneği: {e['ornek']}",
                 f"- Adım: {e['adim']}, kayıp: {' → '.join(map(str, e['kayip']))}",
                 f"- Gelişim kapısı: **{'geçti' if e['kapi'] else 'geçemedi'}** — {e['gerekce']}", "",
                 "## Görevlere göre örnek", ""]

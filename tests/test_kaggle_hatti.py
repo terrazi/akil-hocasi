@@ -120,6 +120,13 @@ def test_ozel_model_ekleme_ve_secim(tmp_path, monkeypatch):
     yz.ozel_model_ekle(disari / "kapisiz.gguf")
     assert yz.secili("sohbet")["kimlik"] == "qwen3.5-4b"                       # kapıyı geçmeyen kendiliğinden seçilmez
     assert yz.sil("kapisiz")
+    yz.ust_bilgi_guncelle(b["kimlik"], yerel_sinav={})
+    for ad, tarih in (("akilhocasi-4b-20261117", "2026-11-17T02:00:00"), ("akilhocasi-4b-20261103", "2026-11-03")):
+        (disari / f"{ad}.gguf").write_bytes(b"GGUF" + b"3" * 10)
+        (disari / f"{ad}.json").write_text(json.dumps({"kimlik": ad, "tur": "sohbet", "oncelik": 80,
+                                                       "egitim": {"kapi": True, "tarih": tarih}}))
+        yz.ozel_model_ekle(disari / f"{ad}.gguf")
+    assert yz.secili("sohbet")["kimlik"] == "akilhocasi-4b-20261117"           # eşit öncelikte en yeni eğitim
     sahte = disari / "sahte.gguf"
     sahte.write_bytes(b"XXXX")
     with pytest.raises(Exception, match="GGUF"):

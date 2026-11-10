@@ -61,13 +61,15 @@ class YZYoneticisi:
         def oncelik(m):
             t = self.katalog.getir(m["kimlik"])
             if t:
-                return t.oncelik
+                return (t.oncelik, "")
             yerel = (m.get("yerel_sinav") or {}).get("sonuc")
             if yerel == "reddedildi":
-                return 0                              # bu bilgisayardaki sınavda temel modelden kötü çıktı
+                return (0, "")                        # bu bilgisayardaki sınavda temel modelden kötü çıktı
             if not ((m.get("egitim") or {}).get("kapi") or yerel == "benimsendi"):
-                return 0                              # kapıdan geçmemiş model kendiliğinden seçilmez (yalnız yarışta)
-            return int(m.get("oncelik", 0))           # katalog dışı (ör. Kaggle'da eğitilmiş) model
+                return (0, "")                        # kapıdan geçmemiş model kendiliğinden seçilmez (yalnız yarışta)
+            # Katalog dışı (Kaggle'da eğitilmiş) model; eşit öncelikte daha yeni eğitim seçilir (yeni tur, öncekiyle
+            # kıyaslanıp kapıyı geçmiştir).
+            return (int(m.get("oncelik", 0)), str((m.get("egitim") or {}).get("tarih", "")))
 
         def bellek_yeter(m):
             t = self.katalog.getir(m["kimlik"])
