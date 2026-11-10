@@ -71,8 +71,12 @@ o yordamların istemleriyle ve yalnızca **programın sınamasından geçmiş** 
    dosyasını indirin. `EGITIM_RAPORU.md` ilke karnesini ve kapı kararını gösterir.
 
 ### Programa yükleme
-- Akıl Hocası'nda **Zekâ › Eğitilmiş modeli ekle…** düğmesine basıp `.gguf` dosyasını seçin. `.json` dosyası aynı
-  klasörde olmalıdır.
+- **En kolayı:** GitHub iş akışıyla eğitilen model, iş akışının `durum` adımında programın sürüm sayfasına
+  (`model-…` etiketiyle, 2 GB sınırı nedeniyle parçalar hâlinde) kendiliğinden yayımlanır. Akıl Hocası'nda
+  **Zekâ › Eğitilmiş modeli indir** düğmesi en yeni modeli bulur, parçaları kaldığı yerden sürdürerek indirir, her
+  parçayı ve birleşik dosyayı sha256 ile doğrular ve ekler. Bütün birim bilgisayarları aynı modeli böyle alır.
+- Elle: **Zekâ › Eğitilmiş modeli ekle…** düğmesine basıp Kaggle çıktısındaki `.gguf` dosyasını seçin. `.json`
+  dosyası aynı klasörde olmalıdır.
 - Model Kaggle sınavında kapıyı geçtiyse hemen kullanılır. Program onu gece kendi sınav setiyle ayrıca sınar.
 - Birden çok bilgisayar için dosyayı ağdaki ortak klasöre koyup her bilgisayarda aynı düğmeyle ekleyebilirsiniz.
 

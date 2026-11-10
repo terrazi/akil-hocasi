@@ -42,6 +42,8 @@ jobs:
   kaggle:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      contents: write          # eğitilmiş modeli sürüm olarak yayımlamak için
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -74,6 +76,11 @@ jobs:
             kaggle_cikti/**/*.log
           if-no-files-found: ignore
           retention-days: 14
+      - name: Eğitilmiş modeli sürüm olarak yayımla (programdan tek tıkla indirilir)
+        if: inputs.islem == 'durum' && inputs.asama == 'egit' && inputs.veri_turu != '0' && steps.kaggle.outputs.durum == 'bitti'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python kaggle/surum_yayinla.py kaggle_cikti
       - name: Eğitilmiş modeli sakla
         if: inputs.islem == 'durum' && inputs.asama == 'egit' && steps.kaggle.outputs.durum == 'bitti'
         uses: actions/upload-artifact@v4

@@ -1005,6 +1005,7 @@ class ZekaSayfasi(QWidget):
     durdur_istendi = Signal()
     gelistir_istendi = Signal()
     ozel_ekle_istendi = Signal(str)          # Kaggle'da eğitilmiş GGUF dosyası
+    surum_indir_istendi = Signal()           # GitHub sürümündeki eğitilmiş modeli indir
     paket_istendi = Signal(str, bool)        # Kaggle eğitim paketi: hedef dosya, gerçek sorular dahil mi
 
     def __init__(self, s, parent=None):
@@ -1097,10 +1098,15 @@ class ZekaSayfasi(QWidget):
         paket.setIcon(ikon("indir", R["metin"], 16))
         paket.setToolTip("Kütüphaneyi ve altın soru setini bir sonraki Kaggle eğitimine taşıyan paket")
         paket.clicked.connect(self._paket_hazirla)
+        surum = QPushButton("  Eğitilmiş modeli indir")
+        surum.setIcon(ikon("indir", R["metin"], 16))
+        surum.setToolTip("Kaggle'da eğitilip programın sürüm sayfasında yayımlanan en yeni modeli indirir, "
+                         "doğrular ve ekler (bütün birim bilgisayarları aynı modeli alır)")
+        surum.clicked.connect(self.surum_indir_istendi.emit)
         nasil = QPushButton("Kaggle'da nasıl eğitilir?")
         nasil.setObjectName("Hayalet")
         nasil.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(KAGGLE_REHBERI)))
-        for d in (ekle, paket, nasil):
+        for d in (surum, ekle, paket, nasil):
             kaggle.addWidget(d)
         kaggle.addStretch(1)
         yer.addLayout(kaggle)

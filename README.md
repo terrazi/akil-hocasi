@@ -110,8 +110,9 @@ Ofis bilgisayarında çalışan küçük model, Kaggle'ın ücretsiz GPU'larınd
 **programın kendi çekirdek yordamları üzerinden** eğitilir: öğretmen, programın sorduğu her şeye (durum çözümleme,
 gerekçeli cevap, öz eleştiri, düzeltme, hatadan ders, çalışma sorusu, resmî yazı) programın istemleriyle cevap verir.
 Yalnız programın sınamasından geçen cevaplar eğitim verisi olur. Eğitilen model (Qwen3.5-4B, 8 GB bilgisayarlar için)
-eğitimde görmediği sorularda ilke karnesi ve gelişim kapısıyla sınanır. Program onu **Zekâ › Eğitilmiş modeli ekle**
-ile alır ve gece kendi sınav setiyle yeniden sınar. **Zekâ › Kaggle eğitim paketi hazırla** düğmesi, kütüphaneyi ve
+eğitimde görmediği sorularda ilke karnesi ve gelişim kapısıyla sınanır ve programın sürüm sayfasında yayımlanır.
+Program onu **Zekâ › Eğitilmiş modeli indir** ile alır (parçalar sha256 ile doğrulanır; elle eklemek için
+**Eğitilmiş modeli ekle**) ve gece kendi sınav setiyle yeniden sınar. **Zekâ › Kaggle eğitim paketi hazırla** düğmesi, kütüphaneyi ve
 altın soru setini bir sonraki eğitime taşır; her tur bir öncekinin üzerine kurulur. Ayrıntılar ve adımlar:
 [kaggle/BENIOKU.md](kaggle/BENIOKU.md).
 

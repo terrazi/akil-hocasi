@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import traceback
 
 import numpy as np
@@ -257,5 +258,34 @@ class IsCalisani(QThread):
     def run(self) -> None:
         try:
             self.bitti.emit(self.is_())
+        except Exception as e:  # noqa: BLE001 - kullanıcıya gösterilir
+            self.hata.emit(str(e))
+
+
+class SurumModeliCalisani(QThread):
+    """GitHub sürümündeki (Kaggle'da eğitilmiş) en yeni modeli bulur, parçalarını indirip doğrular ve ekler."""
+    ilerleme = Signal(float, float, str)        # alınan MB, toplam MB, açıklama
+    bitti = Signal(object)                      # eklenen modelin bilgisi
+    hata = Signal(str)
+
+    def __init__(self, yz, parent=None):
+        super().__init__(parent)
+        self.yz = yz
+        self.durdur = threading.Event()
+
+    def run(self) -> None:
+        from ..yz import surum_modeli
+        try:
+            b = surum_modeli.son_egitilmis()
+            if b is None:
+                self.hata.emit("Yayımlanmış eğitilmiş model bulunamadı (internet bağlantısını denetleyin).")
+                return
+            kimlik = b["bilgi"]["kimlik"]
+            if any(m.get("kimlik") == kimlik for m in self.yz.ozel_modeller()):
+                self.hata.emit(f"En yeni eğitilmiş model ({b['bilgi'].get('ad', kimlik)}) zaten kurulu.")
+                return
+            gguf = surum_modeli.indir(b, self.yz.model_klasoru(),
+                                      lambda a, t, m: self.ilerleme.emit(a / 2**20, t / 2**20, m), self.durdur)
+            self.bitti.emit(self.yz.ozel_model_ekle(gguf))
         except Exception as e:  # noqa: BLE001 - kullanıcıya gösterilir
             self.hata.emit(str(e))

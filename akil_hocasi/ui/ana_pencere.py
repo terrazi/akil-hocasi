@@ -17,6 +17,7 @@ from .. import UYGULAMA_ADI
 from ..answer.modeller import Cevap, Durum
 from ..crawler.zamanlayici import GOREVLER
 from .calisanlar import (AdayModelCalisani, AnlamCalisani, IsCalisani, ModelIndirmeCalisani, OgrenmeCalisani,
+                         SurumModeliCalisani,
                          TaramaCalisani, YZBaslatici, ZekaCalisani)
 from .danisma import DanismaSayfasi
 from .hizli_yakala import CanliMetinPenceresi, YakalamaKatmani
@@ -301,6 +302,7 @@ class AnaPencere(QMainWindow):
         self.zeka.durdur_istendi.connect(lambda: self._indirme and self._indirme.durdur.set())
         self.zeka.gelistir_istendi.connect(lambda: self.kendini_gelistir(elle=True))
         self.zeka.ozel_ekle_istendi.connect(self._ozel_model_ekle)
+        self.zeka.surum_indir_istendi.connect(self._surum_modeli_indir)
         self.zeka.paket_istendi.connect(self._egitim_paketi)
         self.sayfalar = {"danisma": self.danisma, "yazi": self.yazi, "hesap": hesap, "kontrol": kontrol,
                          "depo": self.depo_sayfa, "havuz": self.havuz, "degisti": self.degisti, "zeka": self.zeka,
@@ -454,21 +456,36 @@ class AnaPencere(QMainWindow):
         self._is_calisani.hata.connect(lambda h: self.zeka.indirme_bitti("İşlem tamamlanamadı: " + h))
         self._is_calisani.start()
 
+    def _ozel_eklendi(self, bilgi: dict) -> None:
+        e = bilgi.get("egitim") or {}
+        mesaj = (f"{bilgi['ad']} eklendi. " + ("Kaggle sınavında gelişim kapısını geçtiği için kullanılacak; "
+                                                if e.get("kapi") else "Kaggle sınavında kapıyı geçemediği için "
+                                                "yalnız yarışmada denenecek; ")
+                 + "bu bilgisayarın sınav setiyle gece ayrıca sınanacak.")
+        self.zeka.indirme_bitti(mesaj)
+        self._bildirim("Eğitilmiş model", mesaj[:200])
+        self.zeka.yenile()
+        if e.get("kapi"):
+            self._model_yukle(degistir=bilgi["kimlik"])          # sunucu eğitilmiş modelle yeniden başlar
+
     def _ozel_model_ekle(self, yol: str) -> None:
         """Kaggle'da eğitilmiş modeli ekler. Kaggle sınavında kapıyı geçtiyse öncelikli olur; bu bilgisayarın
         sınav setiyle gece ayrıca temel modele karşı sınanır, kötü çıkarsa temel modele dönülür."""
-        def bitti(bilgi: dict) -> None:
-            e = bilgi.get("egitim") or {}
-            mesaj = (f"{bilgi['ad']} eklendi. " + ("Kaggle sınavında gelişim kapısını geçtiği için kullanılacak; "
-                                                    if e.get("kapi") else "Kaggle sınavında kapıyı geçemediği için "
-                                                    "yalnız yarışmada denenecek; ")
-                     + "bu bilgisayarın sınav setiyle gece ayrıca sınanacak.")
-            self.zeka.indirme_bitti(mesaj)
-            self._bildirim("Eğitilmiş model", mesaj[:200])
-            self.zeka.yenile()
-            if e.get("kapi"):
-                self._model_yukle(degistir=bilgi["kimlik"])      # sunucu eğitilmiş modelle yeniden başlar
-        self._arka_planda(lambda: self.s.yz.ozel_model_ekle(yol), "Model dosyası kopyalanıyor…", bitti)
+        self._arka_planda(lambda: self.s.yz.ozel_model_ekle(yol), "Model dosyası kopyalanıyor…", self._ozel_eklendi)
+
+    def _surum_modeli_indir(self) -> None:
+        """Programın sürüm sayfasında yayımlanan en yeni eğitilmiş modeli indirir (parçalar doğrulanır)."""
+        c = getattr(self, "_surum_calisani", None)
+        if c is not None and c.isRunning():
+            self.zeka.indirme_bitti("Eğitilmiş model indirmesi sürüyor.")
+            return
+        self.zeka.indirme_bitti("Eğitilmiş model aranıyor…")
+        self._surum_calisani = SurumModeliCalisani(self.s.yz, self)
+        self._surum_calisani.ilerleme.connect(self.zeka.indirme_durumu)
+        self._surum_calisani.bitti.connect(self._ozel_eklendi)
+        self._surum_calisani.hata.connect(self.zeka.indirme_bitti)
+        self.zeka.durdur_istendi.connect(self._surum_calisani.durdur.set)
+        self._surum_calisani.start()
 
     def _egitim_paketi(self, yol: str, gercek: bool) -> None:
         from ..yz.kaggle_paketi import paket_olustur
@@ -887,13 +904,14 @@ class AnaPencere(QMainWindow):
         self.s.dosya_kuyrugu.durdur()
         if self.s.tarayici:
             self.s.tarayici.durdur.set()
-        for c in (self._indirme, self._anlam_calisani, self._zeka):
+        for c in (self._indirme, self._anlam_calisani, self._zeka, getattr(self, "_surum_calisani", None)):
             if c and c.isRunning():
                 c.durdur.set()
         yazi_calisani = getattr(self.yazi, "calisan", None)
         danisma_calisani = getattr(self.danisma, "calisan", None)
         for t in (self._tarama, self._takip, self._ogrenme, self._aday, self._indirme, self._anlam_calisani, self._zeka,
-                  self._yz_baslatici, yazi_calisani, danisma_calisani, getattr(self, "_is_calisani", None)):
+                  self._yz_baslatici, yazi_calisani, danisma_calisani, getattr(self, "_is_calisani", None),
+                  getattr(self, "_surum_calisani", None)):
             if t and t.isRunning():
                 t.wait(bekle_ms)
         self.s.yz.durdur()
