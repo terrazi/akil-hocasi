@@ -178,15 +178,20 @@ def durum(arg) -> None:
         hedef.mkdir(parents=True)
         kaggle("kernels", "output", k, "-p", str(hedef), yakala=True)
         for g in hedef.rglob("*.log"):                  # defter günlüğünün sonu Actions günlüğünde görünsün
-            print(f"===== {g.name} (son 500 anlamlı satır) =====")
+            print(f"===== {g.name} (önemli satırlar) =====")
             try:
                 satirlar = []
                 for kayit in json.loads(g.read_text("utf-8", errors="replace")):
                     satirlar += str(kayit.get("data", "")).splitlines()
             except ValueError:
                 satirlar = g.read_text("utf-8", errors="replace").splitlines()
-            satirlar = [s for s in satirlar if "%|" not in s and s.strip()]     # ilerleme çubukları atlanır
-            print("\n".join(satirlar[-500:]))
+            satirlar = [s for s in satirlar if "%|" not in s and s.strip() and not s.startswith("INFO:hf-to-gguf")]
+            onemli = [s for s in satirlar if re.match(r"^\[\d\d:\d\d:\d\d\]", s) or any(
+                a in s for a in ("Error", "Traceback", "'loss'", "train_runtime", "Unsloth:", "Exception", "Num examples",
+                                 "Total steps", "Trainable parameters"))]
+            print("\n".join(onemli[-300:]))
+            print("----- günlüğün sonu -----")
+            print("\n".join(satirlar[-120:]))
         if "complete" in durum_metni:
             derleme_paylas(hedef)
         for ad in ("manifest.json", "rapor.json", "EGITIM_RAPORU.md"):
