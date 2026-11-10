@@ -158,12 +158,12 @@ def baslat(arg) -> None:
     (klasor / dosya).write_text(json.dumps(defter, ensure_ascii=False), "utf-8")
     veri_setleri = [x for x in arg.veri_seti if x] + ([derleme_veri_seti()] if derleme_hazir() else [])
     meta = {"id": k, "title": k.split("/")[1], "code_file": dosya, "language": "python", "kernel_type": "notebook",
-            "is_private": True, "enable_gpu": True, "enable_internet": True, "machine_shape": "NvidiaTeslaT4",
+            "is_private": True, "enable_gpu": True, "enable_internet": True, "machine_shape": arg.hizlandirici,
             "dataset_sources": veri_setleri, "kernel_sources": girdiler,
             "competition_sources": [], "model_sources": []}
     (klasor / "kernel-metadata.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps(meta, ensure_ascii=False, indent=1))
-    kaggle("kernels", "push", "-p", str(klasor), "--accelerator", "NvidiaTeslaT4")
+    kaggle("kernels", "push", "-p", str(klasor), "--accelerator", arg.hizlandirici)
     print(f"Başlatıldı: https://www.kaggle.com/code/{k}")
 
 
@@ -244,6 +244,8 @@ def main() -> None:
     p.add_argument("--tarama-dk", type=float, default=40)
     p.add_argument("--ogrenci", default="4B")
     p.add_argument("--epoch", type=float, default=2)
+    p.add_argument("--hizlandirici", default="NvidiaTeslaT4", choices=["NvidiaTeslaT4", "NvidiaTeslaP100"],
+                   help="T4 x2 (varsayılan; eğitim iki kartta) ya da P100 (tek kart; T4 kuyruğu uzunsa)")
     p.add_argument("--sinav", type=int, default=150, help="eğitim sonrası sınavdaki en çok soru")
     p.add_argument("--veri-seti", nargs="*", default=[], help="kullanıcı eğitim paketi veri seti (kullanici/ad)")
     arg = p.parse_args()
