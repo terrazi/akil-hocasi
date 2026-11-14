@@ -152,6 +152,18 @@ def paylas(arg) -> None:
     print(f"Paylaşıldı: {model_veri_seti()} ← {gguf.name} ({gguf.stat().st_size / 1e9:.2f} GB)")
 
 
+def gorus_dene(arg) -> None:
+    """Görüş yazısı toplayıcısını ve ayrıştırıcısını gerçek belgelerde dener (GPU/Kaggle gerekmez)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from akil_hocasi.ogrenme.gorus import GorusToplayici
+    gorusler = GorusToplayici(bekleme=0.5).topla(sure_sn=max(300.0, arg.sure_saat * 3600))
+    print(f"AYRIŞTIRILAN GÖRÜŞ: {len(gorusler)}")
+    for g in gorusler:
+        print(json.dumps({"kaynak": g["kaynak"], "tarih": g["tarih"], "konu": g["konu"][:120],
+                          "talep": g["talep"][:300], "sonuc": g["sonuc"][:300], "dayanaklar": g["dayanaklar"],
+                          "alinti": len(g["alintilar"])}, ensure_ascii=False))
+
+
 def derleme_veri_seti() -> str:
     return f"{kullanici()}/akilhocasi-llama-bin"
 
@@ -325,7 +337,7 @@ def kalan_gpu_saat() -> tuple[float | None, str]:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("islem", choices=["baslat", "durum", "dogrula", "paylas"])
+    p.add_argument("islem", choices=["baslat", "durum", "dogrula", "paylas", "gorus_dene"])
     p.add_argument("asama", choices=["veri", "egit", "sinav"], nargs="?", default="veri")
     p.add_argument("--tur", type=int, default=1, help="veri turu numarası (1, 2, 3…)")
     p.add_argument("--veri-turu", type=int, default=1, help="eğitimde kullanılacak veri turu sayısı")
@@ -343,7 +355,7 @@ def main() -> None:
     p.add_argument("--model-adi", default="", help="sınanacak model (ör. akilhocasi-4b-20261114)")
     p.add_argument("--veri-seti", nargs="*", default=[], help="kullanıcı eğitim paketi veri seti (kullanici/ad)")
     arg = p.parse_args()
-    {"baslat": baslat, "durum": durum, "dogrula": dogrula, "paylas": paylas}[arg.islem](arg)
+    {"baslat": baslat, "durum": durum, "dogrula": dogrula, "paylas": paylas, "gorus_dene": gorus_dene}[arg.islem](arg)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ on:
       islem:
         description: "dogrula: Kaggle kimliğini sına · baslat: defteri Kaggle'da çalıştır · durum: durumu ve (bittiyse) çıktıyı al"
         type: choice
-        options: [durum, baslat, dogrula, paylas]
+        options: [durum, baslat, dogrula, paylas, gorus_dene]
         default: durum
       asama:
         description: "veri: öğretmenle eğitim verisi üret (1. defter) · egit: modeli eğit ve sına (2. defter)"
@@ -52,6 +52,7 @@ jobs:
       - name: Kaggle aracı
         run: |
           pip install -q --upgrade kaggle six
+          if [ "${{ inputs.islem }}" = "gorus_dene" ]; then pip install -q requests pymupdf; fi
           pip show kaggle kagglesdk 2>/dev/null | grep -E '^(Name|Version)' || true
       - name: Kaggle
         id: kaggle

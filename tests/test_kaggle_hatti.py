@@ -47,7 +47,7 @@ def test_veri_asamasi_uctan_uca(hat_modulu, kutuphane, tmp_path, monkeypatch):
                         lambda veri, dk: (kutuphane, [{"id": "k1", "soru": IYI, "dayanak": ["9999/2"]}]))
     (tmp_path / "gecici").mkdir()
     arg = Namespace(sure_saat=0.3, soru=10, paralel=2, yuva_baglami=4096, ogretmen="Q4_K_M",
-                    ogretmen_adres=f"http://127.0.0.1:{sunucu.server_address[1]}", anlamsiz=True, tarama_dk=0, dusunme=False,
+                    ogretmen_adres=f"http://127.0.0.1:{sunucu.server_address[1]}", anlamsiz=True, tarama_dk=0, dusunme=False, gorus_dk=0,
                     yazi_orani=0.2)
     hat_modulu.veri(arg)
     sunucu.shutdown()

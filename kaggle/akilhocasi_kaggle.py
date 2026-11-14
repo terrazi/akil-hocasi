@@ -347,6 +347,7 @@ def veri(arg) -> None:
         birlestir(onceki_turlar, veri_k)
         bildir(f"Önceki {len(onceki_turlar)} veri turu birleştirildi; kaldığı yerden sürüyor")
     k, ek_sorular = kutuphane_hazirla(veri_k, arg.tarama_dk)
+    gorus_ogeleri = gorusleri_topla(k, veri_k, arg.gorus_dk)
     from akil_hocasi.yz.damitma import Damitici, OgretmenModeli
     sunucular, bin_k = [], None
     try:
@@ -367,6 +368,14 @@ def veri(arg) -> None:
             adres = so.adres
         ogretmen = OgretmenModeli(adres, OGRETMENLER.get(arg.ogretmen, ("öğretmen",))[0],
                                   OgretmenModeli.DUSUNEN_GOREVLER if arg.dusunme else ())
+        if gorus_ogeleri:                    # gerçek sınav: görüşlerden doğal soru + zorlaştırılmış varyasyonlar
+            from akil_hocasi.ogrenme.gorus import sinav_sorulari_kur
+            gs = sinav_sorulari_kur(k, ogretmen, gorus_ogeleri, time.monotonic() + arg.gorus_dk * 60)
+            with (veri_k / "gercek_sinav.jsonl").open("a", encoding="utf-8") as f:
+                for x in gs:
+                    f.write(json.dumps(x, ensure_ascii=False) + "\n")
+            bildir(f"Gerçek sınav: {len(gs)} soru ({sum(1 for x in gs if x['tur'] == 'gercek')} gerçek, "
+                   f"{sum(1 for x in gs if x['tur'] != 'gercek')} zorlaştırılmış varyasyon) — eğitime girmez")
         kalan_dk = max(1.0, (bitis_saat - time.monotonic()) / 60 - 15)   # paketleme payı
         d = Damitici(s, ogretmen, veri_k, bildir)
         rapor = d.calistir(kalan_dk, arg.soru, arg.yazi_orani, arg.paralel, ek_sorular)
@@ -384,6 +393,29 @@ def veri(arg) -> None:
         "ornek_toplam": ornek_sayisi, "bu_oturum": rapor.__dict__, "program": _surum()}, ensure_ascii=False, indent=1),
         "utf-8")
     bildir(f"Veri hazır: {ornek_sayisi} örnek ({veri_k}). Defteri yeniden çalıştırırsanız veri birikir.")
+
+
+def gorusleri_topla(k, veri_k: Path, dakika: float) -> list[dict]:
+    """Resmî görüş yazılarını toplar (işlemci; ağ), kütüphaneye eşler, eskimişleri eler. Daha önceki turlarda
+    çevrilmiş görüşler atlanır."""
+    if dakika <= 0:
+        return []
+    from akil_hocasi.ogrenme.gorus import GorusToplayici, gorusten_sinav_ogesi
+    onceki = set()
+    if (veri_k / "gercek_sinav.jsonl").is_file():
+        onceki = {json.loads(s).get("gorus_id") for s in (veri_k / "gercek_sinav.jsonl").read_text("utf-8").splitlines()
+                  if s.strip()}
+    try:
+        gorusler = GorusToplayici().topla(sure_sn=dakika * 60)
+    except Exception as e:  # noqa: BLE001
+        bildir(f"Görüş yazıları toplanamadı: {e}")
+        return []
+    with (veri_k / "gorusler.jsonl").open("a", encoding="utf-8") as f:
+        for g in gorusler:
+            f.write(json.dumps(g, ensure_ascii=False) + "\n")
+    ogeler = [o for g in gorusler if g["id"] not in onceki and (o := gorusten_sinav_ogesi(k, g))]
+    bildir(f"Görüş yazısı: {len(gorusler)} ayrıştırıldı, {len(ogeler)} tanesi kütüphaneye bağlandı (güncel)")
+    return ogeler
 
 
 def gunluk_kopyala(hedef: Path, satir: int = 400) -> None:
@@ -407,7 +439,7 @@ def onceki_veriler(deneme: bool = False) -> list[Path]:
 def birlestir(kaynaklar: list[Path], hedef: Path) -> None:
     """Veri turlarını tek klasörde toplar: örnek/sınav/işlenen satırları yinelemesiz eklenir, kütüphane en yeniden."""
     hedef.mkdir(parents=True, exist_ok=True)
-    for ad in ("ornekler.jsonl", "sinav.jsonl", "islenen.txt"):
+    for ad in ("ornekler.jsonl", "sinav.jsonl", "islenen.txt", "gercek_sinav.jsonl", "gorusler.jsonl"):
         gorulen, satirlar = set(), []
         for d in [hedef] + list(kaynaklar):
             if (d / ad).is_file():
@@ -810,15 +842,18 @@ def sina(veri_k: Path, bin_k: Path, temel: Path, yeni: Path, sinir: int, bitis: 
     from akil_hocasi.ogrenme.degerlendirme import altin_sonucu
     from akil_hocasi.yz.sunucu import SunucuModeli
     sorular = []
-    if (veri_k / "sinav.jsonl").is_file():
-        for satir in (veri_k / "sinav.jsonl").read_text("utf-8").splitlines():
-            try:
-                x = json.loads(satir)
-                sorular.append({"soru": x["soru"], "beklenen_dayanak": x.get("beklenen_dayanak", [])})
-            except (ValueError, KeyError):
-                continue
+    for ad, tur in (("gercek_sinav.jsonl", None), ("sinav.jsonl", "sentetik")):   # önce gerçek sorular
+        if (veri_k / ad).is_file():
+            for satir in (veri_k / ad).read_text("utf-8").splitlines():
+                try:
+                    x = json.loads(satir)
+                    sorular.append({"soru": x["soru"], "beklenen_dayanak": x.get("beklenen_dayanak", []),
+                                    "tur": tur or x.get("tur", "gercek")})
+                except (ValueError, KeyError):
+                    continue
     sorular = sorular[:sinir]
-    bildir(f"Sınav: {len(sorular)} görülmemiş soru, temel ve eğitilmiş model aynı anda")
+    gercek_n = sum(1 for s in sorular if s["tur"] != "sentetik")
+    bildir(f"Sınav: {len(sorular)} görülmemiş soru ({gercek_n} gerçek/zorlaştırılmış), iki model aynı anda")
     k = Kutuphane(veri_k / "kutuphane.db")
     anlam, sa = None, None
     try:
@@ -874,7 +909,16 @@ def sina(veri_k: Path, bin_k: Path, temel: Path, yeni: Path, sinir: int, bitis: 
     for ad, karne in (("temel", eski), ("yeni", yeni_k)):
         bildir(f"Sınav ({ad}): {karne.toplam} ortak soru, başarı %{round(100 * karne.basari)}, "
                f"kritik {karne.kritik}, ilke ortalaması {karne.ortalama():.3f}")
-    return eski.sozluk(), yeni_k.sozluk(), kapi(eski, yeni_k)
+    kirilim = {}
+    for grup in sorted({sorular[i]["tur"].split(":")[0] for i in ortak}):
+        sec = [i for i in ortak if sorular[i]["tur"].split(":")[0] == grup]
+        e, y = karne_hesapla([sonuclar["temel"][i] for i in sec]), karne_hesapla([sonuclar["yeni"][i] for i in sec])
+        kirilim[grup] = {"soru": len(sec), "temel": e.sozluk(), "yeni": y.sozluk()}
+        bildir(f"  {grup}: {len(sec)} soru — başarı %{round(100 * e.basari)} → %{round(100 * y.basari)}, "
+               f"kritik {e.kritik} → {y.kritik}")
+    es, ys = eski.sozluk(), yeni_k.sozluk()
+    es["kirilim"] = ys["kirilim"] = kirilim
+    return es, ys, kapi(eski, yeni_k)
 
 
 def rapor_yaz(yol: Path, bilgi: dict, secilen: list[dict]) -> None:
@@ -915,6 +959,7 @@ def main() -> None:
     v.add_argument("--paralel", type=int, default=8, help="öğretmen sunucusundaki eşzamanlı istek (yuva)")
     v.add_argument("--yuva-baglami", type=int, default=12288, help="sunucu yuvası başına bağlam")
     v.add_argument("--dusunme", action="store_true", help="öğretmen sentez/düzeltme/yazıda düşünsün (yavaş)")
+    v.add_argument("--gorus-dk", type=float, default=20, help="resmî görüş yazılarını toplama/çevirme süresi (0: yok)")
     v.add_argument("--ogretmen", choices=sorted(OGRETMENLER), default="Q4_K_M")
     v.add_argument("--ogretmen-adres", default="", help="hazır bir öğretmen sunucusu (derleme/indirme atlanır)")
     v.add_argument("--anlamsiz", action="store_true", help="anlam araması olmadan")
