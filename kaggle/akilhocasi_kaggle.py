@@ -405,11 +405,17 @@ def gorusleri_topla(k, veri_k: Path, dakika: float) -> list[dict]:
     if (veri_k / "gercek_sinav.jsonl").is_file():
         onceki = {json.loads(s).get("gorus_id") for s in (veri_k / "gercek_sinav.jsonl").read_text("utf-8").splitlines()
                   if s.strip()}
-    try:
-        gorusler = GorusToplayici().topla(sure_sn=dakika * 60)
-    except Exception as e:  # noqa: BLE001
-        bildir(f"Görüş yazıları toplanamadı: {e}")
-        return []
+    hazir = girdide_bul("gorusler.jsonl")                 # GitHub'da önceden toplanmış (GPU süresi harcanmaz)
+    hazir = [h for h in hazir if VERI_ADI not in str(h)]
+    if hazir:
+        gorusler = [json.loads(s) for h in hazir for s in h.read_text("utf-8").splitlines() if s.strip()]
+        bildir(f"Görüş yazıları önceden toplanmış: {len(gorusler)} ({hazir[0].parent.name})")
+    else:
+        try:
+            gorusler = GorusToplayici().topla(sure_sn=dakika * 60)
+        except Exception as e:  # noqa: BLE001
+            bildir(f"Görüş yazıları toplanamadı: {e}")
+            return []
     with (veri_k / "gorusler.jsonl").open("a", encoding="utf-8") as f:
         for g in gorusler:
             f.write(json.dumps(g, ensure_ascii=False) + "\n")

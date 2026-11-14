@@ -152,11 +152,42 @@ def paylas(arg) -> None:
     print(f"Paylaşıldı: {model_veri_seti()} ← {gguf.name} ({gguf.stat().st_size / 1e9:.2f} GB)")
 
 
-def gorus_dene(arg) -> None:
-    """Görüş yazısı toplayıcısını ve ayrıştırıcısını gerçek belgelerde dener (GPU/Kaggle gerekmez)."""
+def gorus_veri_seti() -> str:
+    return f"{kullanici()}/akilhocasi-gorusler"
+
+
+def gorus_veri_seti_hazir() -> bool:
+    c = subprocess.run(["kaggle", "datasets", "status", gorus_veri_seti()], capture_output=True, text=True)
+    return c.returncode == 0 and "ready" in c.stdout.lower()
+
+
+def gorus_topla(arg) -> None:
+    """Resmî görüş yazılarını burada (GitHub, GPU'suz) toplar ve özel 'akilhocasi-gorusler' veri setine koyar;
+    veri turu toplamayı atlayıp GPU süresini öğretmene ayırır."""
+    gorusler = _gorusleri_derle(arg)
+    klasor = Path("kaggle_gonder") / "gorusler_ds"
+    shutil.rmtree(klasor, ignore_errors=True)
+    klasor.mkdir(parents=True)
+    (klasor / "gorusler.jsonl").write_text("".join(json.dumps(g, ensure_ascii=False) + "\n" for g in gorusler),
+                                           "utf-8")
+    (klasor / "dataset-metadata.json").write_text(json.dumps(
+        {"title": "akilhocasi-gorusler", "id": gorus_veri_seti(), "licenses": [{"name": "other"}]}), "utf-8")
+    if gorus_veri_seti_hazir():
+        kaggle("datasets", "version", "-p", str(klasor), "-m", f"{len(gorusler)} görüş", yakala=True)
+    else:
+        kaggle("datasets", "create", "-p", str(klasor), yakala=True)
+    print(f"Paylaşıldı: {gorus_veri_seti()} ← {len(gorusler)} görüş")
+
+
+def _gorusleri_derle(arg) -> list[dict]:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from akil_hocasi.ogrenme.gorus import GorusToplayici
-    gorusler = GorusToplayici(bekleme=0.5).topla(sure_sn=max(300.0, arg.sure_saat * 3600))
+    return GorusToplayici(bekleme=0.5).topla(sure_sn=max(300.0, arg.sure_saat * 3600))
+
+
+def gorus_dene(arg) -> None:
+    """Görüş yazısı toplayıcısını ve ayrıştırıcısını gerçek belgelerde dener (GPU/Kaggle gerekmez)."""
+    gorusler = _gorusleri_derle(arg)
     print(f"AYRIŞTIRILAN GÖRÜŞ: {len(gorusler)}")
     for g in gorusler:
         print(json.dumps({"kaynak": g["kaynak"], "tarih": g["tarih"], "konu": g["konu"][:120],
@@ -222,7 +253,8 @@ def baslat(arg) -> None:
         if kalan < arg.sure_saat:
             print("UYARI: kota yetmiyor; Kaggle defteri kota yenilenene dek kuyrukta bekletir. Süreyi kotaya sığdırın.")
     veri_setleri = [x for x in arg.veri_seti if x] + ([derleme_veri_seti()] if derleme_hazir() else []) \
-        + ([model_veri_seti()] if arg.asama == "sinav" and model_veri_seti_hazir() else [])
+        + ([model_veri_seti()] if arg.asama == "sinav" and model_veri_seti_hazir() else []) \
+        + ([gorus_veri_seti()] if arg.asama == "veri" and gorus_veri_seti_hazir() else [])
     gpu = not getattr(arg, "islemci", False)
     meta = {"id": k, "title": k.split("/")[1], "code_file": dosya, "language": "python", "kernel_type": "notebook",
             "is_private": True, "enable_gpu": gpu, "enable_internet": True,
@@ -337,7 +369,7 @@ def kalan_gpu_saat() -> tuple[float | None, str]:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("islem", choices=["baslat", "durum", "dogrula", "paylas", "gorus_dene"])
+    p.add_argument("islem", choices=["baslat", "durum", "dogrula", "paylas", "gorus_dene", "gorus_topla"])
     p.add_argument("asama", choices=["veri", "egit", "sinav"], nargs="?", default="veri")
     p.add_argument("--tur", type=int, default=1, help="veri turu numarası (1, 2, 3…)")
     p.add_argument("--veri-turu", type=int, default=1, help="eğitimde kullanılacak veri turu sayısı")
@@ -355,7 +387,8 @@ def main() -> None:
     p.add_argument("--model-adi", default="", help="sınanacak model (ör. akilhocasi-4b-20261114)")
     p.add_argument("--veri-seti", nargs="*", default=[], help="kullanıcı eğitim paketi veri seti (kullanici/ad)")
     arg = p.parse_args()
-    {"baslat": baslat, "durum": durum, "dogrula": dogrula, "paylas": paylas, "gorus_dene": gorus_dene}[arg.islem](arg)
+    {"baslat": baslat, "durum": durum, "dogrula": dogrula, "paylas": paylas, "gorus_dene": gorus_dene,
+     "gorus_topla": gorus_topla}[arg.islem](arg)
 
 
 if __name__ == "__main__":
