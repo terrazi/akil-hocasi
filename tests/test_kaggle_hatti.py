@@ -162,3 +162,24 @@ def test_kaggle_api_defter_ayarlarini_yazar():
     kod = "".join("".join(h["source"]) for h in d["cells"] if h["cell_type"] == "code")
     assert "OGRENCI = '2B'" in kod and "SURE_SAAT = 9.5" in kod and "EPOCH = 1" in kod
     assert "# 8 GB bilgisayarlar" in kod                                      # açıklamalar korunur
+
+
+def test_kontrol_noktasindan_uyarlayici(tmp_path, hat_modulu):
+    kg = hat_modulu
+    k = tmp_path / "egitim"
+    for adim in (20, 40):
+        n = k / f"checkpoint-{adim}"
+        n.mkdir(parents=True)
+        (n / "adapter_config.json").write_text("{}")
+        (n / "adapter_model.safetensors").write_bytes(b"x" * adim)
+        (n / "optimizer.pt").write_bytes(b"o")
+        (n / "trainer_state.json").write_text(json.dumps({"global_step": adim, "epoch": adim / 100, "log_history": [
+            {"loss": 0.9}, {"loss": 0.6}, {"train_runtime": 1}]}))
+    (k / "checkpoint-60").mkdir()                                  # yarım yazılmış nokta (uyarlayıcı yok) sayılmaz
+    son = kg.son_kontrol_noktasi(k)
+    assert son.name == "checkpoint-40"
+    u, ist = tmp_path / "lora", tmp_path / "ist.json"
+    kg.kontrol_noktasini_al(son, u, ist, 100)
+    assert (u / "adapter_model.safetensors").stat().st_size == 40 and not (u / "optimizer.pt").exists()
+    d = json.loads(ist.read_text())
+    assert d["adim"] == 40 and d["kayip"] == [0.9, 0.6] and d["kontrol_noktasi"] == "checkpoint-40"

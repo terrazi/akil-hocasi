@@ -417,31 +417,44 @@ def egit(arg) -> None:
     pay = min(arg.sinav_payi_saat * 3600, 0.4 * arg.sure_saat * 3600)
     egitim_bitis = bitis_duvar - pay
     uyarlayici, istatistik = GECICI / "lora", GECICI / "egitim_istatistik.json"
+    kontrol_k = GECICI / "egitim"                      # kontrol noktaları (çökmede kaldığı yerden sürdürülür)
+    shutil.rmtree(kontrol_k, ignore_errors=True)
     kart = gpu_sayisi()
-    # Denemeler sırayla: fp32 hesap (T4'te emüle bf16 katmanları yavaşlatıyor), Unsloth'un varsayılanı, tek kart.
-    denemeler = ([(kart, "fp32"), (kart, "oto")] if kart > 1 else []) + [(1, "fp32"), (1, "oto")]
-    for n, hesap in denemeler:
+    # Deneme 1: bütün kartlar. Çökerse (ör. çok uzun bir örnekte bellek) son kontrol noktasından aynı kart sayısıyla
+    # sürdürülür; kontrol noktası yoksa tek kartla baştan. Süre yetmezse son kontrol noktası kullanılır.
+    n, surdur = kart, None
+    for _deneme in range(3):
         shutil.rmtree(uyarlayici, ignore_errors=True)
         istatistik.unlink(missing_ok=True)
         if time.time() > egitim_bitis - 600:
             break
-        ortam = {**os.environ}
+        ortam = {**os.environ, "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
         ortam.pop("CUDA_VISIBLE_DEVICES", None)
         betik = [str(Path(__file__).resolve()), "ogren", "--model", hf_kimlik, "--veri", str(veri_dosyasi),
                  "--cikti", str(uyarlayici), "--istatistik", str(istatistik), "--bitis", str(egitim_bitis),
                  "--epoch", str(arg.epoch), "--ogrenme-hizi", str(arg.ogrenme_hizi), "--lora-r", str(arg.lora_r),
                  "--en-cok-belirtec", str(arg.en_cok_belirtec), "--dort-bit", arg.dort_bit,
-                 "--ornek-sn", str(arg.ornek_sn), "--hesap", hesap]
+                 "--ornek-sn", str(arg.ornek_sn), "--kontrol", str(kontrol_k)] + (["--surdur", str(surdur)] if surdur else [])
         if n > 1:
             komut = [sys.executable, "-m", "torch.distributed.run", "--standalone", f"--nproc_per_node={n}"] + betik
         else:
             ortam["CUDA_VISIBLE_DEVICES"] = "0"
             komut = [sys.executable] + betik
-        bildir(f"Eğitim {n} kartta başlıyor (hesap: {hesap})")
+        bildir(f"Eğitim {n} kartta " + (f"{surdur.name} noktasından sürüyor" if surdur else "başlıyor"))
         r = subprocess.run(komut, env=ortam)
         if r.returncode == 0 and (uyarlayici / "adapter_config.json").is_file():
             break
-        bildir(f"{n} kart / {hesap} eğitimi başarısız (çıkış {r.returncode}); sonraki deneme")
+        son = son_kontrol_noktasi(kontrol_k)
+        bildir(f"Eğitim yarıda kaldı (çıkış {r.returncode}); son kontrol noktası: {son.name if son else 'yok'}")
+        if son is not None:
+            surdur = son
+        else:
+            n = 1
+    if not (uyarlayici / "adapter_config.json").is_file():
+        son = son_kontrol_noktasi(kontrol_k)
+        if son is not None:                             # süre bitti: en son kontrol noktası model olur
+            kontrol_noktasini_al(son, uyarlayici, istatistik, len(ciftler))
+            bildir(f"Son kontrol noktası kullanılıyor: {son.name}")
     if not (uyarlayici / "adapter_config.json").is_file():
         raise SystemExit("Eğitim tamamlanamadı (uyarlayıcı yok)")
     ist = json.loads(istatistik.read_text("utf-8")) if istatistik.is_file() else {}
@@ -493,6 +506,26 @@ def egit(arg) -> None:
     rapor_yaz(model_k / "EGITIM_RAPORU.md", bilgi, secilen)
     bildir(("Gelişim kapısı GEÇİLDİ" if kapi_sonucu[0] else "Gelişim kapısı geçilemedi") + f": {kapi_sonucu[1]}")
     bildir(f"Çıktı: {model_k} (Output sekmesinden indirip Zekâ › Eğitilmiş modeli ekle ile yükleyin)")
+
+
+def son_kontrol_noktasi(klasor: Path) -> Path | None:
+    noktalar = [p for p in klasor.glob("checkpoint-*") if (p / "adapter_config.json").is_file()]
+    return max(noktalar, key=lambda p: int(p.name.split("-")[-1]), default=None)
+
+
+def kontrol_noktasini_al(nokta: Path, uyarlayici: Path, istatistik: Path, ornek: int) -> None:
+    """Kontrol noktasındaki uyarlayıcıyı ve eğitim durumunu (adım, kayıplar) eğitim sonucu olarak yazar."""
+    shutil.rmtree(uyarlayici, ignore_errors=True)
+    uyarlayici.mkdir(parents=True)
+    for f in nokta.iterdir():
+        if f.name.startswith("adapter_") or f.name in ("tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
+                                                         "special_tokens_map.json", "vocab.json", "merges.txt"):
+            shutil.copy2(f, uyarlayici / f.name)
+    durum = json.loads((nokta / "trainer_state.json").read_text("utf-8")) if (nokta / "trainer_state.json").is_file() else {}
+    kayiplar = [x["loss"] for x in durum.get("log_history", []) if "loss" in x]
+    istatistik.write_text(json.dumps({"adim": durum.get("global_step", 0), "kayip": kayiplar,
+                                      "epoch": round(float(durum.get("epoch", 0) or 0), 2), "kart": "?",
+                                      "ornek_sn": "?", "kontrol_noktasi": nokta.name}, ensure_ascii=False), "utf-8")
 
 
 def belirtecleyici(hf_kimlik: str):
@@ -548,9 +581,18 @@ def ogren(arg) -> None:
         use_gradient_checkpointing="unsloth")
 
     # Dönem sayısı süreye sığdırılır (kosinüs takvimi tamamlansın): örnek başına süre denemeden ölçüldü.
-    kalan = max(600.0, arg.bitis - time.time())
-    sigan = kalan / max(1.0, len(veri_seti) * arg.ornek_sn / dunya)
-    donem = round(min(arg.epoch, max(0.3, 0.9 * sigan)), 2)
+    # Sürdürmede ilk denemenin takvimi korunur (kontrol noktasına kaydedilmiş).
+    takvim = Path(arg.kontrol) / "takvim.json"
+    if arg.surdur and takvim.is_file():
+        donem = json.loads(takvim.read_text("utf-8"))["donem"]
+        kalan = max(600.0, arg.bitis - time.time())
+    else:
+        kalan = max(600.0, arg.bitis - time.time())
+        sigan = kalan / max(1.0, len(veri_seti) * arg.ornek_sn / dunya)
+        donem = round(min(arg.epoch, max(0.3, 0.9 * sigan)), 2)
+        if ana:
+            Path(arg.kontrol).mkdir(parents=True, exist_ok=True)
+            takvim.write_text(json.dumps({"donem": donem}), "utf-8")
     birikim = max(1, 8 // dunya)
     toplam_adim = max(1, int(len(veri_seti) * donem / (birikim * dunya)))
     if ana:
@@ -569,17 +611,18 @@ def ogren(arg) -> None:
             return control
 
     bf16 = torch.cuda.get_device_capability(sira)[0] >= 8      # T4 (7.5): bf16 yok; Unsloth qwen3_5'i fp32 hesaplar
-    ayar = TrainingArguments(
-        output_dir=str(GECICI / "egitim"), per_device_train_batch_size=1, gradient_accumulation_steps=birikim,
+    ayar = TrainingArguments(                         # kontrol noktası: çökmede emek kaybolmasın
+        output_dir=arg.kontrol, per_device_train_batch_size=1, gradient_accumulation_steps=birikim,
         num_train_epochs=donem, learning_rate=arg.ogrenme_hizi, warmup_steps=max(1, int(0.03 * toplam_adim)),
-        lr_scheduler_type="cosine", logging_steps=5, save_strategy="no", report_to="none", optim="adamw_8bit",
+        lr_scheduler_type="cosine", logging_steps=5, save_strategy="steps", save_steps=max(10, toplam_adim // 10),
+        save_total_limit=2, report_to="none", optim="adamw_8bit",
         weight_decay=0.01, bf16=bf16, fp16=False, seed=3407, remove_unused_columns=False,
         ddp_find_unused_parameters=False if dunya > 1 else None)
     egitici = Trainer(model=model, args=ayar, train_dataset=veri_seti,
                       data_collator=DataCollatorForSeq2Seq(tok, padding=True, label_pad_token_id=-100),
                       callbacks=[SureSiniri()])
     bas = time.time()
-    sonuc = egitici.train()
+    sonuc = egitici.train(resume_from_checkpoint=arg.surdur or None)
     if ana:
         kayiplar = [x["loss"] for x in egitici.state.log_history if "loss" in x]
         gecen = time.time() - bas
@@ -615,12 +658,17 @@ def temiz_birlestir(uyarlayici: Path, hf_kimlik: str, hedef: Path) -> None:
         birlesik = PeftModel.from_pretrained(taban, str(uyarlayici)).merge_and_unload()
         hedef.mkdir(parents=True, exist_ok=True)
         birlesik.save_pretrained(str(hedef), safe_serialization=True)
-        for sinif in ("AutoProcessor", "AutoTokenizer"):
-            try:
-                getattr(transformers, sinif).from_pretrained(str(uyarlayici)).save_pretrained(str(hedef))
+        kaydedildi = False
+        for kaynak in (str(uyarlayici), hf_kimlik):          # kontrol noktasında belirteçleyici olmayabilir
+            for sinif in ("AutoProcessor", "AutoTokenizer"):
+                try:
+                    getattr(transformers, sinif).from_pretrained(kaynak).save_pretrained(str(hedef))
+                    kaydedildi = True
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
+            if kaydedildi:
                 break
-            except Exception:  # noqa: BLE001
-                continue
         bildir("LoRA asıl 16 bit tabana CPU'da birleştirildi")
         del birlesik, taban
     except Exception as e:  # noqa: BLE001
@@ -763,14 +811,15 @@ def main() -> None:
     e.add_argument("--epoch", type=float, default=2)
     e.add_argument("--ogrenme-hizi", type=float, default=1e-4)
     e.add_argument("--lora-r", type=int, default=32)
-    e.add_argument("--en-cok-belirtec", type=int, default=6144)
+    e.add_argument("--en-cok-belirtec", type=int, default=5632,
+                   help="daha uzun örnekler atılır (6144'te fp32 dikkat matrisi T4 belleğini aştı)")
     e.add_argument("--dort-bit", choices=["oto", "evet", "hayir"], default="oto",
                    help="taban model eğitimde 4 bit (QLoRA); oto: 20 GB'tan küçük kartta")
     e.add_argument("--sinav", type=int, default=150, help="sınavda kullanılacak en çok soru")
     e.add_argument("--surum", default="")
     e.add_argument("--sinav-payi-saat", type=float, default=1.75, help="dönüştürme ve sınava ayrılan saat")
-    e.add_argument("--ornek-sn", type=float, default=22.0,
-                   help="kart başına örnek eğitim süresi tahmini, sn (T4 QLoRA ölçümü ~22; dönemi süreye sığdırır)")
+    e.add_argument("--ornek-sn", type=float, default=15.0,
+                   help="kart başına örnek eğitim süresi tahmini, sn (T4 x2 QLoRA ölçümü ~14; dönemi süreye sığdırır)")
     o = alt.add_parser("ogren", help="(iç) eğitim süreci; egit tarafından torchrun ile başlatılır")
     o.add_argument("--model", required=True)
     o.add_argument("--veri", required=True)
@@ -780,10 +829,12 @@ def main() -> None:
     o.add_argument("--epoch", type=float, default=2)
     o.add_argument("--ogrenme-hizi", type=float, default=1e-4)
     o.add_argument("--lora-r", type=int, default=32)
-    o.add_argument("--en-cok-belirtec", type=int, default=6144)
+    o.add_argument("--en-cok-belirtec", type=int, default=5632)
     o.add_argument("--dort-bit", choices=["oto", "evet", "hayir"], default="oto")
-    o.add_argument("--ornek-sn", type=float, default=22.0)
+    o.add_argument("--ornek-sn", type=float, default=15.0)
     o.add_argument("--hesap", choices=["oto", "fp32"], default="oto")
+    o.add_argument("--kontrol", default=str(GECICI / "egitim"), help="kontrol noktası klasörü")
+    o.add_argument("--surdur", default="", help="bu kontrol noktasından sürdür")
     arg = p.parse_args()
     GECICI.mkdir(parents=True, exist_ok=True)
     CALISMA.mkdir(parents=True, exist_ok=True)

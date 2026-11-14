@@ -90,3 +90,31 @@ def test_bozuk_parca_reddedilir(yayin, tmp_path):
 
 def test_surum_yoksa_none():
     assert surum_modeli.son_egitilmis(api="http://127.0.0.1:9") is None
+
+
+def test_on_surum_onerilmez(yayin, monkeypatch):
+    """Kaggle kapısını geçemeyen model ön sürüm olarak yayımlanır; program onu önermez."""
+    import json as _json
+    api, _, _ = yayin
+    asil = surum_modeli._istek
+
+    def sahte(url, *a, **k):
+        y = asil(url, *a, **k)
+        if "/releases" not in url:
+            return y
+        veri = _json.loads(y.read().decode())
+        for s in veri:
+            s["prerelease"] = True
+
+        class Y:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *e):
+                return False
+
+            def read(self):
+                return _json.dumps(veri).encode()
+        return Y()
+    monkeypatch.setattr(surum_modeli, "_istek", sahte)
+    assert surum_modeli.son_egitilmis(api=api) is None

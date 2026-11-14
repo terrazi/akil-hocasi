@@ -33,8 +33,8 @@ def son_egitilmis(depo: str = DEPO, zaman_asimi: float = 20, api: str = API) -> 
         log.info("Eğitilmiş model sürümleri alınamadı: %s", e)
         return None
     for s in surumler:
-        if not str(s.get("tag_name", "")).startswith("model-") or s.get("draft"):
-            continue
+        if not str(s.get("tag_name", "")).startswith("model-") or s.get("draft") or s.get("prerelease"):
+            continue                                   # ön sürüm: Kaggle sınavında kapıyı geçemedi, önerilmez
         varliklar = {a["name"]: a["browser_download_url"] for a in s.get("assets", [])}
         if "model.json" not in varliklar:
             continue
