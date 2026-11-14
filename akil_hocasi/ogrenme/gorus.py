@@ -56,6 +56,8 @@ _TALEP = re.compile(r"([^.]{20,700}?)(?:hususunda|konusunda|ile\s+ilgili\s+olara
                     r"(?:talep\s+edil|sorul|isten)", re.I)
 _KONU = re.compile(r"Konu\s*:\s*([^\n]{5,200})", re.I)
 _TARIH = re.compile(r"\b(\d{2})[./](\d{2})[./](\d{4})\b")
+_KUNYE = re.compile(r"\(?\s*(\d{1,2})[./](\d{1,2})[./](\d{4})\s*[-–]\s*\d{1,6}\s*\)")   # (10/7/2014-3512)
+_KUNYE_ON = re.compile(r"^\W*(?:\(?\s*\d{1,2}[./]\d{1,2}[./]\d{4}\s*[-–]\s*\d{1,6}\s*\)|\d{4}\s*[-–]\s*\d{1,6}\s*\))\s*")
 _KISISEL = re.compile(r"\b\d{11}\b|\bTR\d{2}[\d ]{20,}|\bIBAN\b", re.I)
 
 
@@ -116,9 +118,11 @@ def gorus_ayristir(metin: str, kaynak: str = "") -> dict | None:
     if not (talep or konu) or not sonuc or not dayanaklar:
         return None
     tarih = ""
-    t = _TARIH.search(metin[:1500])
+    t = _KUNYE.search(metin[:3000]) or _TARIH.search(metin[:600])   # önce yazının kendi künyesi
     if t:
-        tarih = f"{t.group(3)}-{t.group(2)}-{t.group(1)}"
+        tarih = f"{t.group(3)}-{int(t.group(2)):02d}-{int(t.group(1)):02d}"
+    if talep:
+        talep = _KUNYE_ON.sub("", talep).lstrip("’'…. ")
     alintilar = [a.strip() for a in re.findall(r"[\"“]([^\"”]{40,600})[\"”]", duz)]
     return {"id": hashlib.sha1((sonuc + (talep or konu)).encode("utf-8")).hexdigest()[:16], "kaynak": kaynak,
             "tarih": tarih, "konu": konu, "talep": talep or konu, "sonuc": sonuc, "dayanaklar": dayanaklar,

@@ -82,3 +82,9 @@ def test_ogretmenle_soru_ve_varyasyon():
     s = sinav_sorulari_kur(k, Ogretmen(), [o])
     assert [x["tur"] for x in s] == ["gercek", "varyasyon:gundelik_dil"]     # dayanağı değişen varyasyon alınmaz
     assert all(x["beklenen_dayanak"] == ["MEV:1.5.657/105"] and x["gorus_id"] == "abc" for x in s)
+
+
+def test_kunye_tarihi_ve_on_ek():
+    metin = ORNEK.replace("İlgi yazınızda, Devlet", "(10/7/2014-3512) Devlet").replace("11/02/2013", "")
+    g = gorus_ayristir(metin)
+    assert g and g["tarih"] == "2014-07-10" and g["talep"].startswith("Devlet memurlarının")
