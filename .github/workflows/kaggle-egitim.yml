@@ -10,7 +10,7 @@ on:
       islem:
         description: "dogrula: Kaggle kimliğini sına · baslat: defteri Kaggle'da çalıştır · durum: durumu ve (bittiyse) çıktıyı al"
         type: choice
-        options: [durum, baslat, dogrula]
+        options: [durum, baslat, dogrula, paylas]
         default: durum
       asama:
         description: "veri: öğretmenle eğitim verisi üret (1. defter) · egit: modeli eğit ve sına (2. defter)"

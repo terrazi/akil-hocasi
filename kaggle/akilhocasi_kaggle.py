@@ -67,7 +67,7 @@ def girdide_bul(desen: str) -> list[Path]:
 def llama_hazirla(gpu: bool = True, yeniden: bool = False) -> Path:
     """llama-server ve llama-quantize: önceki defter çıktısındaki derleme varsa o, yoksa CUDA ile derlenir.
     yeniden=True: arşiv kullanılmaz, en yeni kaynak derlenir (eski derleme yeni GGUF'u açamadığında)."""
-    hedef = GECICI / "llama_bin"
+    hedef = GECICI / ("llama_bin" if gpu else "llama_bin_cpu")
     if yeniden:
         shutil.rmtree(hedef, ignore_errors=True)
         shutil.rmtree(GECICI / "llama.cpp", ignore_errors=True)
@@ -131,7 +131,7 @@ def llama_dogrula(bin_k: Path, modeller: list[Path]) -> Path:
     for ad, h in sorun:
         bildir(f"Derleme {ad} modelini açamadı: {h}")
     bildir("llama.cpp en yeni kaynaktan yeniden derleniyor")
-    yeni = llama_hazirla(gpu=True, yeniden=True)
+    yeni = llama_hazirla(gpu=not ISLEMCI["aktif"], yeniden=True)
     llama_arsivle(yeni, CALISMA / "llama_bin.tar.gz")
     kalan = [m.name for m in modeller if not model_acilabiliyor(yeni, m)[0]]
     if kalan:
@@ -211,14 +211,17 @@ def llama_arsivle(klasor: Path, hedef: Path) -> None:
             t.add(f, arcname=f.name)
 
 
+ISLEMCI = {"aktif": False}          # sınav yalnız işlemcide (GPU kotası yokken; Kaggle CPU oturumu kotasızdır)
+
+
 def sunucu(model: Path, tur: str, bin_klasoru: Path, baglam: int, paralel: int = 1, ek: list[str] | None = None,
-           havuzlama: str = "last"):
+           havuzlama: str = "last", is_parcacigi: int | None = None):
     from akil_hocasi.yz.sunucu import LlamaSunucusu
     gunluk = GECICI / "gunluk"
     gunluk.mkdir(parents=True, exist_ok=True)
-    argumanlar = ["-ngl", "999", "-np", str(paralel)] + (ek or [])
-    s = LlamaSunucusu(str(model), tur, baglam, os.cpu_count() or 4, str(bin_klasoru / "llama-server"), gunluk,
-                      argumanlar, havuzlama)
+    argumanlar = ["-ngl", "0" if ISLEMCI["aktif"] else "999", "-np", str(paralel)] + (ek or [])
+    s = LlamaSunucusu(str(model), tur, baglam, is_parcacigi or os.cpu_count() or 4,
+                      str(bin_klasoru / "llama-server"), gunluk, argumanlar, havuzlama)
     os.environ["LD_LIBRARY_PATH"] = f"{bin_klasoru}:{os.environ.get('LD_LIBRARY_PATH', '')}"
     s.baslat(zaman_asimi=2400, ilerleme=lambda m: None)
     return s
@@ -591,22 +594,27 @@ def sinav(arg) -> None:
     veri_k = GECICI / "veri"
     shutil.rmtree(veri_k, ignore_errors=True)
     birlestir(_veri_klasorleri(), veri_k)
-    adaylar = [p for p in girdide_bul("akilhocasi_model/akilhocasi-*.gguf") if "mmproj" not in p.name]
+    ISLEMCI["aktif"] = bool(arg.islemci)
+    adaylar = [p for p in girdide_bul("akilhocasi-*.gguf") if "mmproj" not in p.name
+               and (not arg.model_adi or p.stem == arg.model_adi)]
     if not adaylar:
-        raise SystemExit("Girdilerde eğitilmiş model (akilhocasi_model/*.gguf) yok")
-    kaynak = max(adaylar, key=lambda p: p.stat().st_mtime)
+        raise SystemExit(f"Girdilerde eğitilmiş model yok ({arg.model_adi or 'akilhocasi-*.gguf'})")
+    kaynak = max(adaylar, key=lambda p: p.stem)                     # ad tarih taşır: en yeni
     model_k = CALISMA / MODEL_ADI
     model_k.mkdir(parents=True, exist_ok=True)
     hedef = model_k / kaynak.name
     shutil.copy2(kaynak, hedef)
     if (kaynak.parent / "lora").is_dir():
         shutil.copytree(kaynak.parent / "lora", model_k / "lora", dirs_exist_ok=True)
-    ozet = kaynak.parent / "egitim_ozeti.json"
-    ist = json.loads(ozet.read_text("utf-8")) if ozet.is_file() else json.loads(arg.egitim_ozeti or "{}")
+    ozet = next((o for o in (kaynak.parent / "egitim_ozeti.json", kaynak.with_name(kaynak.stem + ".ozet.json"),
+                             KOK / "kaggle" / "egitim_ozetleri" / f"{kaynak.stem}.json") if o.is_file()), None)
+    ist = json.loads(ozet.read_text("utf-8")) if ozet else json.loads(arg.egitim_ozeti or "{}")
     bildir(f"Sınanacak model: {kaynak.name} ({hedef.stat().st_size / 1e9:.2f} GB); eğitim: {ist}")
     hf_kimlik, katalog_kimlik, bellek = OGRENCILER[arg.ogrenci]
     secilen = dengele(ornekleri_oku([veri_k / "ornekler.jsonl"]))
-    bin_k = llama_hazirla(gpu=True)
+    bin_k = llama_hazirla(gpu=not ISLEMCI["aktif"])
+    if ISLEMCI["aktif"]:
+        bildir(f"Sınav işlemcide: {os.cpu_count()} çekirdek, model başına {max(1, (os.cpu_count() or 4) // 2)}")
     kiyas_yolu, kiyas_adi = onceki_egitilmis(arg.ogrenci)
     if kiyas_yolu is None:
         kiyas_yolu, kiyas_adi = katalog_modeli(katalog_kimlik), katalog_kimlik
@@ -824,7 +832,8 @@ def sina(veri_k: Path, bin_k: Path, temel: Path, yeni: Path, sinir: int, bitis: 
             onceki = os.environ.get("CUDA_VISIBLE_DEVICES")
             os.environ["CUDA_VISIBLE_DEVICES"] = str(i % kart)        # her model kendi kartında
             try:
-                sunucular[ad] = sunucu(yol, "sohbet", bin_k, 8192, 1, ["--jinja"])
+                sunucular[ad] = sunucu(yol, "sohbet", bin_k, 8192, 1, ["--jinja"],
+                                       is_parcacigi=max(1, (os.cpu_count() or 4) // 2) if ISLEMCI["aktif"] else None)
             finally:
                 if onceki is None:
                     os.environ.pop("CUDA_VISIBLE_DEVICES", None)
@@ -931,6 +940,8 @@ def main() -> None:
     s.add_argument("--sure-saat", type=float, default=2.0)
     s.add_argument("--sinav", type=int, default=150)
     s.add_argument("--egitim-ozeti", default="", help="çıktıda egitim_ozeti.json yoksa eğitim bilgisi (JSON)")
+    s.add_argument("--islemci", action="store_true", help="GPU'suz (Kaggle CPU oturumu GPU kotası harcamaz)")
+    s.add_argument("--model-adi", default="", help="girdilerdeki hangi model (ör. akilhocasi-4b-20261114)")
     for yok in ("--epoch", "--en-cok-belirtec", "--sinav-payi-saat"):          # ortak defter satırı için
         s.add_argument(yok, default=None)
     o = alt.add_parser("ogren", help="(iç) eğitim süreci; egit tarafından torchrun ile başlatılır")

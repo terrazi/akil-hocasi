@@ -115,6 +115,43 @@ def defter_hazirla(asama: str, ayarlar: dict[str, object]) -> dict:
     return d
 
 
+def model_veri_seti() -> str:
+    return f"{kullanici()}/akilhocasi-model"
+
+
+def model_veri_seti_hazir() -> bool:
+    c = subprocess.run(["kaggle", "datasets", "status", model_veri_seti()], capture_output=True, text=True)
+    return c.returncode == 0 and "ready" in c.stdout.lower()
+
+
+def paylas(arg) -> None:
+    """Eğitim defterinin (hata verse bile) son çıktısındaki modeli özel 'akilhocasi-model' veri setine koyar.
+    Kaggle, defter girdisi olarak son başarılı sürümün çıktısını bağladığından sınav doğru modeli böyle alır."""
+    k = f"{kullanici()}/akilhocasi-egitim"
+    hedef = Path("kaggle_cikti") / "paylas"
+    shutil.rmtree(hedef, ignore_errors=True)
+    hedef.mkdir(parents=True)
+    kaggle("kernels", "output", k, "-p", str(hedef))
+    ggufler = sorted(p for p in hedef.rglob("akilhocasi-*.gguf") if "mmproj" not in p.name)
+    if not ggufler:
+        raise SystemExit("Eğitim çıktısında model yok")
+    gguf = max(ggufler, key=lambda p: p.stem)
+    klasor = Path("kaggle_gonder") / "akilhocasi_model_ds"
+    shutil.rmtree(klasor, ignore_errors=True)
+    klasor.mkdir(parents=True)
+    shutil.copy2(gguf, klasor / gguf.name)
+    ozet = next(iter(hedef.rglob("egitim_ozeti.json")), None)
+    if ozet:
+        shutil.copy2(ozet, klasor / f"{gguf.stem}.ozet.json")
+    (klasor / "dataset-metadata.json").write_text(json.dumps(
+        {"title": "akilhocasi-model", "id": model_veri_seti(), "licenses": [{"name": "other"}]}), "utf-8")
+    if model_veri_seti_hazir():
+        kaggle("datasets", "version", "-p", str(klasor), "-m", f"{gguf.stem}", yakala=True)
+    else:
+        kaggle("datasets", "create", "-p", str(klasor), yakala=True)
+    print(f"Paylaşıldı: {model_veri_seti()} ← {gguf.name} ({gguf.stat().st_size / 1e9:.2f} GB)")
+
+
 def derleme_veri_seti() -> str:
     return f"{kullanici()}/akilhocasi-llama-bin"
 
@@ -156,25 +193,34 @@ def baslat(arg) -> None:
                 "SINAV_PAYI": arg.sinav_payi}
         girdiler = [f"{kullanici()}/akilhocasi-veri-{i}" for i in range(1, arg.veri_turu + 1)] \
             or [f"{kullanici()}/akilhocasi-veri-0"]              # veri turu 0: eğitim hattının denemesi
-        if arg.asama == "sinav":                                  # yalnız sınav: eğitim defterinin çıktısı girdi
+        if arg.asama == "sinav":                                  # yalnız sınav
             ayar["KOMUT"] = "sinav"
-            girdiler.append(f"{kullanici()}/akilhocasi-egitim")
+            ayar["EK"] = " ".join((["--islemci"] if arg.islemci else [])
+                                  + ([f"--model-adi {arg.model_adi}"] if arg.model_adi else []))
+            # Model: paylaşılmış model veri seti (Kaggle, hata veren defterin çıktısı yerine son BAŞARILI sürümünü
+            # bağlıyor; veri seti doğru dosyayı garanti eder), yoksa eğitim defterinin çıktısı.
+            if not model_veri_seti_hazir():
+                girdiler.append(f"{kullanici()}/akilhocasi-egitim")
     defter = defter_hazirla(arg.asama, ayar)
     dosya = f"{k.split('/')[1]}.ipynb"
     (klasor / dosya).write_text(json.dumps(defter, ensure_ascii=False), "utf-8")
-    kalan, yenilenme = kalan_gpu_saat()
+    kalan, yenilenme = (None, "") if getattr(arg, "islemci", False) else kalan_gpu_saat()
     if kalan is not None:
         print(f"Kalan GPU kotası: {kalan:.1f} saat (yenilenme {yenilenme}); istenen süre {arg.sure_saat} saat")
         if kalan < arg.sure_saat:
             print("UYARI: kota yetmiyor; Kaggle defteri kota yenilenene dek kuyrukta bekletir. Süreyi kotaya sığdırın.")
-    veri_setleri = [x for x in arg.veri_seti if x] + ([derleme_veri_seti()] if derleme_hazir() else [])
+    veri_setleri = [x for x in arg.veri_seti if x] + ([derleme_veri_seti()] if derleme_hazir() else []) \
+        + ([model_veri_seti()] if arg.asama == "sinav" and model_veri_seti_hazir() else [])
+    gpu = not getattr(arg, "islemci", False)
     meta = {"id": k, "title": k.split("/")[1], "code_file": dosya, "language": "python", "kernel_type": "notebook",
-            "is_private": True, "enable_gpu": True, "enable_internet": True, "machine_shape": arg.hizlandirici,
+            "is_private": True, "enable_gpu": gpu, "enable_internet": True,
             "dataset_sources": veri_setleri, "kernel_sources": girdiler,
             "competition_sources": [], "model_sources": []}
+    if gpu:
+        meta["machine_shape"] = arg.hizlandirici
     (klasor / "kernel-metadata.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps(meta, ensure_ascii=False, indent=1))
-    kaggle("kernels", "push", "-p", str(klasor), "--accelerator", arg.hizlandirici)
+    kaggle("kernels", "push", "-p", str(klasor), *(["--accelerator", arg.hizlandirici] if gpu else []))
     print(f"Başlatıldı: https://www.kaggle.com/code/{k}")
 
 
@@ -279,7 +325,7 @@ def kalan_gpu_saat() -> tuple[float | None, str]:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("islem", choices=["baslat", "durum", "dogrula"])
+    p.add_argument("islem", choices=["baslat", "durum", "dogrula", "paylas"])
     p.add_argument("asama", choices=["veri", "egit", "sinav"], nargs="?", default="veri")
     p.add_argument("--tur", type=int, default=1, help="veri turu numarası (1, 2, 3…)")
     p.add_argument("--veri-turu", type=int, default=1, help="eğitimde kullanılacak veri turu sayısı")
@@ -293,9 +339,11 @@ def main() -> None:
                    help="T4 x2 (varsayılan; eğitim iki kartta) ya da P100 (tek kart; T4 kuyruğu uzunsa)")
     p.add_argument("--sinav", type=int, default=150, help="eğitim sonrası sınavdaki en çok soru")
     p.add_argument("--sinav-payi", type=float, default=1.75, help="dönüştürme ve sınava ayrılan saat")
+    p.add_argument("--islemci", action="store_true", help="sınav GPU'suz (Kaggle CPU oturumu GPU kotası harcamaz)")
+    p.add_argument("--model-adi", default="", help="sınanacak model (ör. akilhocasi-4b-20261114)")
     p.add_argument("--veri-seti", nargs="*", default=[], help="kullanıcı eğitim paketi veri seti (kullanici/ad)")
     arg = p.parse_args()
-    {"baslat": baslat, "durum": durum, "dogrula": dogrula}[arg.islem](arg)
+    {"baslat": baslat, "durum": durum, "dogrula": dogrula, "paylas": paylas}[arg.islem](arg)
 
 
 if __name__ == "__main__":
