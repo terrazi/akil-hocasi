@@ -64,12 +64,16 @@ def girdide_bul(desen: str) -> list[Path]:
 
 
 # ---------------------------------------------------------------------------- llama.cpp (CUDA)
-def llama_hazirla(gpu: bool = True) -> Path:
-    """llama-server ve llama-quantize: önceki defter çıktısındaki derleme varsa o, yoksa CUDA ile derlenir."""
+def llama_hazirla(gpu: bool = True, yeniden: bool = False) -> Path:
+    """llama-server ve llama-quantize: önceki defter çıktısındaki derleme varsa o, yoksa CUDA ile derlenir.
+    yeniden=True: arşiv kullanılmaz, en yeni kaynak derlenir (eski derleme yeni GGUF'u açamadığında)."""
     hedef = GECICI / "llama_bin"
+    if yeniden:
+        shutil.rmtree(hedef, ignore_errors=True)
+        shutil.rmtree(GECICI / "llama.cpp", ignore_errors=True)
     if (hedef / "llama-server").is_file():
         return hedef
-    for arsiv in girdide_bul("llama_bin.tar.gz") + [CALISMA / VERI_ADI / "llama_bin.tar.gz"]:
+    for arsiv in ([] if yeniden else girdide_bul("llama_bin.tar.gz") + [CALISMA / VERI_ADI / "llama_bin.tar.gz"]):
         if arsiv.is_file():
             hedef.mkdir(parents=True, exist_ok=True)
             with tarfile.open(arsiv) as t:
@@ -106,6 +110,59 @@ def llama_hazirla(gpu: bool = True) -> Path:
         if f.is_file():
             shutil.copy2(f, hedef / f.name)
     return hedef
+
+
+def model_acilabiliyor(bin_k: Path, model: Path) -> tuple[bool, str]:
+    """Bu llama.cpp derlemesi modeli açabiliyor mu (yeni dönüştürücünün yazdığı GGUF'u eski derleme açamayabilir)?"""
+    from akil_hocasi.yz.sunucu import ModelHatasi
+    try:
+        s = sunucu(model, "sohbet", bin_k, 2048, 1, ["--jinja"])
+        s.durdur()
+        return True, ""
+    except ModelHatasi as e:
+        return False, str(e)[-300:]
+
+
+def llama_dogrula(bin_k: Path, modeller: list[Path]) -> Path:
+    """Sınavdaki bütün modelleri açabilen derleme: açamazsa en yeni kaynak derlenir (arşivi çıktıya konur)."""
+    sorun = [(m.name, h) for m in modeller for ok, h in [model_acilabiliyor(bin_k, m)] if not ok]
+    if not sorun:
+        return bin_k
+    for ad, h in sorun:
+        bildir(f"Derleme {ad} modelini açamadı: {h}")
+    bildir("llama.cpp en yeni kaynaktan yeniden derleniyor")
+    yeni = llama_hazirla(gpu=True, yeniden=True)
+    llama_arsivle(yeni, CALISMA / "llama_bin.tar.gz")
+    kalan = [m.name for m in modeller if not model_acilabiliyor(yeni, m)[0]]
+    if kalan:
+        raise SystemExit(f"Yeni derleme de açamadı: {', '.join(kalan)}")
+    return yeni
+
+
+def llama_surumu(bin_k: Path) -> str:
+    """Derlemenin kaynak işlemesi (llama-server --version: 'version: N (abcdef0)')."""
+    try:
+        c = subprocess.run([str(bin_k / "llama-server"), "--version"], capture_output=True, text=True, timeout=60,
+                           env=llama_ortami(bin_k))
+        m = re.search(r"version:\s*\d+\s*\(([0-9a-f]{7,40})\)", c.stdout + c.stderr)
+        return m.group(1) if m else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def donusturucu_hazirla(bin_k: Path) -> Path:
+    """convert_hf_to_gguf.py, kullanılan derlemeyle aynı işlemeden alınır (sürüm uyuşmazlığı GGUF'u açılmaz yapar)."""
+    kaynak = GECICI / "llama.cpp"
+    if not kaynak.is_dir():
+        islem = llama_surumu(bin_k)
+        if islem:
+            sh(f"git init -q {kaynak} && cd {kaynak} && git remote add origin https://github.com/ggml-org/llama.cpp "
+               f"&& (git fetch -q --depth 1 origin {islem} && git checkout -q FETCH_HEAD || "
+               f"(git fetch -q --filter=blob:none origin master && git checkout -q {islem}))")
+            bildir(f"Dönüştürücü derlemeyle aynı işlemeden: {islem}")
+        else:
+            sh(f"git clone --depth 1 https://github.com/ggml-org/llama.cpp {kaynak}")
+    return kaynak
 
 
 def llama_calisiyor(klasor: Path) -> bool:
@@ -472,9 +529,7 @@ def egit(arg) -> None:
     bin_k = llama_hazirla(gpu=True)
     birlesik = GECICI / "birlesik"
     temiz_birlestir(uyarlayici, hf_kimlik, birlesik)
-    kaynak_llama = GECICI / "llama.cpp"
-    if not kaynak_llama.is_dir():
-        sh(f"git clone --depth 1 https://github.com/ggml-org/llama.cpp {kaynak_llama}")
+    kaynak_llama = donusturucu_hazirla(bin_k)
     sh(f"{sys.executable} -m pip install -q {kaynak_llama / 'gguf-py'} sentencepiece protobuf")
     f16 = GECICI / f"{kimlik}-f16.gguf"
     sh(f"{sys.executable} {kaynak_llama / 'convert_hf_to_gguf.py'} {birlesik} --outtype f16 --outfile {f16}")
@@ -482,6 +537,9 @@ def egit(arg) -> None:
     f16.unlink(missing_ok=True)
     shutil.rmtree(birlesik, ignore_errors=True)
     shutil.copytree(uyarlayici, model_k / "lora", dirs_exist_ok=True)   # sonraki turlar isterse buradan sürdürebilir
+    (model_k / "egitim_ozeti.json").write_text(json.dumps(          # sınav ayrı defterde yinelenirse diye
+        {**ist, "ornek": len(ciftler), "kimlik": kimlik, "surum": surum, "sure_dk": round((time.monotonic() - bas) / 60)},
+        ensure_ascii=False), "utf-8")
     bildir(f"GGUF: {hedef.name} ({hedef.stat().st_size / 1e9:.2f} GB)")
 
     # Sınav: temel model ile eğitilen model, eğitimde hiç görülmemiş sorularda, programın karnesiyle
@@ -492,20 +550,68 @@ def egit(arg) -> None:
     if kiyas_yolu is None:
         kiyas_yolu, kiyas_adi = katalog_modeli(katalog_kimlik), katalog_kimlik
     bildir(f"Kıyas modeli: {kiyas_adi}")
-    karne_temel, karne_yeni, kapi_sonucu = sina(veri_k, bin_k, kiyas_yolu, hedef, arg.sinav, sinav_bitis)
+    sinav_ve_bilgi(veri_k, bin_k, kiyas_yolu, kiyas_adi, hedef, arg, katalog_kimlik, bellek,
+                   {**ist, "ornek": len(ciftler), "sure_dk": round((time.monotonic() - bas) / 60)}, secilen, sinav_bitis)
+
+
+def sinav_ve_bilgi(veri_k: Path, bin_k: Path, kiyas_yolu: Path, kiyas_adi: str, hedef: Path, arg, katalog_kimlik: str,
+                   bellek: float, ist: dict, secilen: list[dict], sinav_bitis: float) -> None:
+    """Sınav (açamayan derleme yenilenir), yan bilgi dosyası ve rapor. Sınav yapılamazsa model yine yazılır
+    (kapı kapalı, gerekçesiyle) — emek kaybolmaz."""
+    try:
+        bin_k = llama_dogrula(bin_k, [kiyas_yolu, hedef])
+        karne_temel, karne_yeni, kapi_sonucu = sina(veri_k, bin_k, kiyas_yolu, hedef, arg.sinav, sinav_bitis)
+    except (Exception, SystemExit) as e:  # noqa: BLE001
+        bildir(f"Sınav yapılamadı: {type(e).__name__}: {str(e)[:300]}")
+        karne_temel, karne_yeni, kapi_sonucu = {}, {}, (False, f"Sınav yapılamadı: {str(e)[:200]}")
+    kimlik, model_k = hedef.stem, hedef.parent
+    surum = kimlik.rsplit("-", 1)[-1]
+    kayiplar = ist.get("kayip", [])
     bilgi = {
         "kimlik": kimlik, "ad": f"Akıl Hocası {arg.ogrenci} (Kaggle eğitimli, {surum})", "tur": "sohbet",
         "baglam": 8192, "dusunme": False, "temel": katalog_kimlik, "en_az_bellek_gb": bellek,
         "oncelik": 80 if kapi_sonucu[0] else 0, "dosya": hedef.name, "kiyas": kiyas_adi,
-        "egitim": {"tarih": datetime.now().isoformat(timespec="seconds"), "ornek": len(ciftler),
+        "egitim": {"tarih": datetime.now().isoformat(timespec="seconds"), "ornek": ist.get("ornek", 0),
                    "adim": ist.get("adim", 0), "dongu": ist.get("epoch"), "kart": ist.get("kart"),
                    "kayip": [round(kayiplar[0], 3), round(kayiplar[-1], 3)] if kayiplar else [],
                    "karne_temel": karne_temel, "karne_yeni": karne_yeni, "kapi": kapi_sonucu[0],
-                   "gerekce": kapi_sonucu[1], "program": _surum(), "sure_dk": round((time.monotonic() - bas) / 60)}}
+                   "gerekce": kapi_sonucu[1], "program": _surum(), "sure_dk": ist.get("sure_dk")}}
     (model_k / f"{kimlik}.json").write_text(json.dumps(bilgi, ensure_ascii=False, indent=1), "utf-8")
     rapor_yaz(model_k / "EGITIM_RAPORU.md", bilgi, secilen)
     bildir(("Gelişim kapısı GEÇİLDİ" if kapi_sonucu[0] else "Gelişim kapısı geçilemedi") + f": {kapi_sonucu[1]}")
     bildir(f"Çıktı: {model_k} (Output sekmesinden indirip Zekâ › Eğitilmiş modeli ekle ile yükleyin)")
+
+
+def sinav(arg) -> None:
+    """Yalnız sınav: eğitim defterinin çıktısındaki modeli (GGUF) veri turunun görülmemiş sorularında sınar,
+    yan bilgi dosyasını ve raporu yazar. Eğitim bitip sınav yarıda kaldığında kullanılır (eğitim yinelenmez)."""
+    from akil_hocasi.yz.damitma import dengele, ornekleri_oku
+    bas = time.monotonic()
+    bitis = bas + arg.sure_saat * 3600 - 10 * 60
+    veri_k = GECICI / "veri"
+    shutil.rmtree(veri_k, ignore_errors=True)
+    birlestir(_veri_klasorleri(), veri_k)
+    adaylar = [p for p in girdide_bul("akilhocasi_model/akilhocasi-*.gguf") if "mmproj" not in p.name]
+    if not adaylar:
+        raise SystemExit("Girdilerde eğitilmiş model (akilhocasi_model/*.gguf) yok")
+    kaynak = max(adaylar, key=lambda p: p.stat().st_mtime)
+    model_k = CALISMA / MODEL_ADI
+    model_k.mkdir(parents=True, exist_ok=True)
+    hedef = model_k / kaynak.name
+    shutil.copy2(kaynak, hedef)
+    if (kaynak.parent / "lora").is_dir():
+        shutil.copytree(kaynak.parent / "lora", model_k / "lora", dirs_exist_ok=True)
+    ozet = kaynak.parent / "egitim_ozeti.json"
+    ist = json.loads(ozet.read_text("utf-8")) if ozet.is_file() else json.loads(arg.egitim_ozeti or "{}")
+    bildir(f"Sınanacak model: {kaynak.name} ({hedef.stat().st_size / 1e9:.2f} GB); eğitim: {ist}")
+    hf_kimlik, katalog_kimlik, bellek = OGRENCILER[arg.ogrenci]
+    secilen = dengele(ornekleri_oku([veri_k / "ornekler.jsonl"]))
+    bin_k = llama_hazirla(gpu=True)
+    kiyas_yolu, kiyas_adi = onceki_egitilmis(arg.ogrenci)
+    if kiyas_yolu is None:
+        kiyas_yolu, kiyas_adi = katalog_modeli(katalog_kimlik), katalog_kimlik
+    bildir(f"Kıyas modeli: {kiyas_adi}")
+    sinav_ve_bilgi(veri_k, bin_k, kiyas_yolu, kiyas_adi, hedef, arg, katalog_kimlik, bellek, ist, secilen, bitis)
 
 
 def son_kontrol_noktasi(klasor: Path) -> Path | None:
@@ -820,6 +926,13 @@ def main() -> None:
     e.add_argument("--sinav-payi-saat", type=float, default=1.75, help="dönüştürme ve sınava ayrılan saat")
     e.add_argument("--ornek-sn", type=float, default=15.0,
                    help="kart başına örnek eğitim süresi tahmini, sn (T4 x2 QLoRA ölçümü ~14; dönemi süreye sığdırır)")
+    s = alt.add_parser("sinav", help="eğitim çıktısındaki modeli yalnız sına (eğitim yinelenmez)")
+    s.add_argument("--ogrenci", choices=list(OGRENCILER), default="4B")
+    s.add_argument("--sure-saat", type=float, default=2.0)
+    s.add_argument("--sinav", type=int, default=150)
+    s.add_argument("--egitim-ozeti", default="", help="çıktıda egitim_ozeti.json yoksa eğitim bilgisi (JSON)")
+    for yok in ("--epoch", "--en-cok-belirtec", "--sinav-payi-saat"):          # ortak defter satırı için
+        s.add_argument(yok, default=None)
     o = alt.add_parser("ogren", help="(iç) eğitim süreci; egit tarafından torchrun ile başlatılır")
     o.add_argument("--model", required=True)
     o.add_argument("--veri", required=True)
@@ -838,7 +951,7 @@ def main() -> None:
     arg = p.parse_args()
     GECICI.mkdir(parents=True, exist_ok=True)
     CALISMA.mkdir(parents=True, exist_ok=True)
-    {"veri": veri, "egit": egit, "ogren": ogren}[arg.komut](arg)
+    {"veri": veri, "egit": egit, "ogren": ogren, "sinav": sinav}[arg.komut](arg)
 
 
 if __name__ == "__main__":

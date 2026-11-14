@@ -15,7 +15,7 @@ on:
       asama:
         description: "veri: öğretmenle eğitim verisi üret (1. defter) · egit: modeli eğit ve sına (2. defter)"
         type: choice
-        options: [veri, egit]
+        options: [veri, egit, sinav]
         default: veri
       tur:
         description: "Veri turu numarası (veri aşaması; her tur öncekilerin üzerine ekler)"
@@ -77,12 +77,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       - name: Eğitilmiş modeli sürüm olarak yayımla (programdan tek tıkla indirilir)
-        if: inputs.islem == 'durum' && inputs.asama == 'egit' && inputs.veri_turu != '0' && steps.kaggle.outputs.durum == 'bitti'
+        if: inputs.islem == 'durum' && (inputs.asama == 'egit' || inputs.asama == 'sinav') && inputs.veri_turu != '0' && steps.kaggle.outputs.durum == 'bitti'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python kaggle/surum_yayinla.py kaggle_cikti
       - name: Eğitilmiş modeli sakla
-        if: inputs.islem == 'durum' && inputs.asama == 'egit' && steps.kaggle.outputs.durum == 'bitti'
+        if: inputs.islem == 'durum' && (inputs.asama == 'egit' || inputs.asama == 'sinav') && steps.kaggle.outputs.durum == 'bitti'
         uses: actions/upload-artifact@v4
         with:
           name: akilhocasi-model

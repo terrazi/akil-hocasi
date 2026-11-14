@@ -96,6 +96,8 @@ def kaggle(*argumanlar: str, yakala: bool = False) -> str:
 def kimlik(asama: str, tur: int, veri_turu: int = 1) -> str:
     if asama == "veri":
         return f"{kullanici()}/akilhocasi-veri-{tur}"
+    if asama == "sinav":
+        return f"{kullanici()}/akilhocasi-sinav"
     return f"{kullanici()}/akilhocasi-egitim" + ("-deneme" if veri_turu == 0 else "")
 
 
@@ -154,6 +156,9 @@ def baslat(arg) -> None:
                 "SINAV_PAYI": arg.sinav_payi}
         girdiler = [f"{kullanici()}/akilhocasi-veri-{i}" for i in range(1, arg.veri_turu + 1)] \
             or [f"{kullanici()}/akilhocasi-veri-0"]              # veri turu 0: eğitim hattının denemesi
+        if arg.asama == "sinav":                                  # yalnız sınav: eğitim defterinin çıktısı girdi
+            ayar["KOMUT"] = "sinav"
+            girdiler.append(f"{kullanici()}/akilhocasi-egitim")
     defter = defter_hazirla(arg.asama, ayar)
     dosya = f"{k.split('/')[1]}.ipynb"
     (klasor / dosya).write_text(json.dumps(defter, ensure_ascii=False), "utf-8")
@@ -275,7 +280,7 @@ def kalan_gpu_saat() -> tuple[float | None, str]:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("islem", choices=["baslat", "durum", "dogrula"])
-    p.add_argument("asama", choices=["veri", "egit"], nargs="?", default="veri")
+    p.add_argument("asama", choices=["veri", "egit", "sinav"], nargs="?", default="veri")
     p.add_argument("--tur", type=int, default=1, help="veri turu numarası (1, 2, 3…)")
     p.add_argument("--veri-turu", type=int, default=1, help="eğitimde kullanılacak veri turu sayısı")
     p.add_argument("--sure-saat", type=float, default=10.5)

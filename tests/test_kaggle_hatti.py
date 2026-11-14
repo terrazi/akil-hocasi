@@ -135,11 +135,13 @@ def test_ozel_model_ekleme_ve_secim(tmp_path, monkeypatch):
 
 def test_defterler_gecerli_ve_betigi_cagirir():
     for ad, komut in (("1_veri_uretimi.ipynb", "akilhocasi_kaggle.py veri"),
-                      ("2_egitim_ve_sinama.ipynb", "akilhocasi_kaggle.py egit")):
+                      ("2_egitim_ve_sinama.ipynb", "akilhocasi_kaggle.py {KOMUT}")):
         d = json.loads((KOK / "kaggle" / ad).read_text("utf-8"))
         kod = "".join("".join(h["source"]) for h in d["cells"] if h["cell_type"] == "code")
         assert komut in kod and "git clone --depth 1 https://github.com/terrazi/akil-hocasi" in kod
         assert d["metadata"]["kaggle"]["isInternetEnabled"] is True
+        if "KOMUT" in komut:
+            assert 'KOMUT = "egit"' in kod
     assert "Eğitilmiş modeli ekle" in (KOK / "kaggle" / "BENIOKU.md").read_text("utf-8")
 
 
