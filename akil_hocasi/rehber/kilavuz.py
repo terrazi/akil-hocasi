@@ -205,11 +205,13 @@ def html_basligi(veri: bytes | str) -> str:
     from bs4 import BeautifulSoup
 
     corba = BeautifulSoup(veri, "lxml")
+    if corba.title and corba.title.string:
+        baslik = re.split(r"\s[|–-]\s", bosluk_normalle(corba.title.string))[0][:160]
+        if len(baslik) >= 6:
+            return baslik
     h1 = corba.find("h1")
     if h1 and 4 <= len(bosluk_normalle(h1.get_text(" "))) <= 160:
         return bosluk_normalle(h1.get_text(" "))
-    if corba.title and corba.title.string:
-        return re.split(r"\s[|–-]\s", bosluk_normalle(corba.title.string))[0][:160]
     return ""
 
 
@@ -519,12 +521,22 @@ def _sayfalara_bol(b: KilavuzBolumu) -> list[KilavuzBolumu]:
 def _baslik_bul(sayfalar: list[Sayfa], varsayilan: str) -> str:
     if not sayfalar or not sayfalar[0].satirlar:
         return varsayilan
-    for s in sayfalar[:2]:                             # "… Uygulama Kılavuzu" satırı en iyi başlıktır
-        for x in s.satirlar[:30]:
-            k = katla(x.metin)
-            if ("kilavuz" in k or "klavuz" in k) and 10 <= len(x.metin) <= 120 and not _ICINDEKILER_SATIRI.search(x.metin) \
-                    and not k.startswith(("bu kilavuz", "kilavuzda", "kilavuzun")):
-                return bosluk_normalle(x.metin)
+    for s in sayfalar[:2]:                             # "… Uygulama Kılavuzu" satırı (ve üstündeki ad satırları)
+        satirlar = s.satirlar[:30]
+        for i, x in enumerate(satirlar):
+            k = katla(x.metin).strip(" .:;-–")
+            if not (8 <= len(x.metin) <= 120) or _ICINDEKILER_SATIRI.search(x.metin) or x.metin[:1].islower():
+                continue
+            if not re.search(r"(?:kilavuz|klavuz)(?:u|lari)?(?:\s*\(.{0,30}\))?$", k):
+                continue
+            parcalar = [bosluk_normalle(x.metin)]
+            for y in reversed(satirlar[max(0, i - 3):i]):
+                ym = bosluk_normalle(y.metin)
+                if not ym or len(ym) > 80 or _TARIH.search(ym) or len(" ".join([ym] + parcalar)) > 120 \
+                        or ym[:1].islower():
+                    break
+                parcalar.insert(0, ym)
+            return " ".join(parcalar)
     ilk = [x for x in sayfalar[0].satirlar[:25] if len(x.metin) >= 4]
     if not ilk:
         return varsayilan
