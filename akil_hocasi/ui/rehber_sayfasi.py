@@ -323,8 +323,8 @@ class RehberSayfasi(QWidget):
         konu = self.ara.text().strip() or (self.secili_pasaj.baslik if self.secili_pasaj else "")
         if not konu:
             return
-        ad = s.kisa if s else ""
-        self._sor(f"{ad} sisteminde “{konu}” işlemini adım adım nasıl yaparım?".strip())
+        ad = s.ad_cumle if s else ""
+        self._sor(f"{ad} üzerinde “{konu}” işlemini adım adım nasıl yaparım?".strip())
 
     def _kilavuzu_ac(self) -> None:
         p = self.secili_pasaj

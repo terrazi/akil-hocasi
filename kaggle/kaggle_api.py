@@ -231,8 +231,8 @@ def _kilavuzlari_derle(arg) -> list[dict]:
 
 def kilavuz_dene(arg) -> None:
     """Kılavuz toplayıcıyı ve ayrıştırıcıyı gerçek resmî sitelerde dener (Kaggle gerekmez)."""
-    from akil_hocasi.rehber.kilavuz import adimlari_bul, etiketleri_bul, yollari_bul
     belgeler = _kilavuzlari_derle(arg)
+    from akil_hocasi.rehber.kilavuz import adimlari_bul, etiketleri_bul, yollari_bul
     print(f"\nKÜTÜPHANEYE GİREN KILAVUZ: {len(belgeler)}")
     for b in belgeler:
         print(json.dumps({"sistem": b["sistem"], "baslik": b["baslik"][:110], "url": b["url"], "tarih": b["tarih"],
@@ -323,7 +323,8 @@ def baslat(arg) -> None:
             print("UYARI: kota yetmiyor; Kaggle defteri kota yenilenene dek kuyrukta bekletir. Süreyi kotaya sığdırın.")
     veri_setleri = [x for x in arg.veri_seti if x] + ([derleme_veri_seti()] if derleme_hazir() else []) \
         + ([model_veri_seti()] if arg.asama == "sinav" and model_veri_seti_hazir() else []) \
-        + ([gorus_veri_seti()] if arg.asama == "veri" and gorus_veri_seti_hazir() else [])
+        + ([gorus_veri_seti()] if arg.asama == "veri" and gorus_veri_seti_hazir() else []) \
+        + ([kilavuz_veri_seti()] if arg.asama == "veri" and kilavuz_veri_seti_hazir() else [])
     gpu = not getattr(arg, "islemci", False)
     meta = {"id": k, "title": k.split("/")[1], "code_file": dosya, "language": "python", "kernel_type": "notebook",
             "is_private": True, "enable_gpu": gpu, "enable_internet": True,

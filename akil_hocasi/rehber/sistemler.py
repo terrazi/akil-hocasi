@@ -32,6 +32,11 @@ class Sistem:
     anahtarlar: tuple[str, ...] = ()    # ekranda/soruda sistemi ayırt eden sözcükler (en ayırt edici başta)
     yayimlayan: tuple[str, ...] = ()    # kılavuzu yayımlayan kurumun belgede geçen adı
     alanlar: tuple[str, ...] = field(default=())  # sistemin kendi alan adları (adres çubuğu tanıma)
+    anilis: str = ""                    # cümle içinde anılışı ("MYS ekranında"); boşsa kısa ad
+
+    @property
+    def ad_cumle(self) -> str:
+        return self.anilis or self.kisa
 
     def anahtar_katli(self) -> list[str]:
         return [katla(a) for a in self.anahtarlar]
@@ -62,6 +67,7 @@ SISTEMLER: tuple[Sistem, ...] = (
                     "Kamu Avans Kart", "Muhasebe İşlem Fişi", "Harcama Birimi Kimlik Yöneticisi"),
         yayimlayan=("Muhasebat Genel Müdürlüğü", "Hazine ve Maliye Bakanlığı"),
         alanlar=("mysv2.hmb.gov.tr", "mys.muhasebat.gov.tr"),
+        anilis="MYS",
     ),
     Sistem(
         "KBS", "Kamu Harcama ve Muhasebe Bilişim Sistemi (maaş, ek ders, sosyal hak, fazla çalışma)", "KBS",
@@ -85,6 +91,7 @@ SISTEMLER: tuple[Sistem, ...] = (
                     "Taşınır İşlem Fişi", "TİF", "Zimmet", "Ambar", "Sayım", "Taşınır Kodu", "VİF"),
         yayimlayan=("Muhasebat Genel Müdürlüğü", "Hazine ve Maliye Bakanlığı"),
         alanlar=("kbs.gov.tr/TMYS",),
+        anilis="KBS Taşınır (TKYS)",
     ),
     Sistem(
         "HITAP", "Hizmet Takip Programı (SGK, 4/c)", "HİTAP", "Sosyal Güvenlik Kurumu",
@@ -109,6 +116,7 @@ SISTEMLER: tuple[Sistem, ...] = (
                     "Sigorta Primleri"),
         yayimlayan=("Sosyal Güvenlik Kurumu",),
         alanlar=("e.sgk.gov.tr", "uyg.sgk.gov.tr", "ebildirge.sgk.gov.tr"),
+        anilis="SGK işveren uygulamaları",
     ),
     Sistem(
         "YOKSIS", "Yükseköğretim Bilgi Sistemi (YÖKSİS)", "YÖKSİS", "Yükseköğretim Kurulu",
@@ -160,6 +168,7 @@ SISTEMLER: tuple[Sistem, ...] = (
                     "Tercih Kılavuzu", "Yerleştirme", "KPSSP3", "KPSSP93", "KPSSP94"),
         yayimlayan=("Ölçme, Seçme ve Yerleştirme Merkezi", "ÖSYM"),
         alanlar=("ais.osym.gov.tr", "sonuc.osym.gov.tr", "osym.gov.tr"),
+        anilis="ÖSYM sistemi",
     ),
     Sistem(
         "EIMZA", "Elektronik imza (Kamu SM nitelikli elektronik sertifika)", "e-İmza", "Kamu Sertifikasyon Merkezi",
@@ -170,6 +179,7 @@ SISTEMLER: tuple[Sistem, ...] = (
                     "Sertifika Deposu", "Kilit Çözme", "Akis", "e-İmza"),
         yayimlayan=("Kamu Sertifikasyon Merkezi", "TÜBİTAK BİLGEM"),
         alanlar=("onlineislemler.kamusm.gov.tr", "kamusm.bilgem.tubitak.gov.tr"),
+        anilis="e-İmza uygulaması",
     ),
     Sistem(
         "DETSIS", "Devlet Teşkilatı Merkezi Kayıt Sistemi (DETSİS)", "DETSİS", "Cumhurbaşkanlığı",

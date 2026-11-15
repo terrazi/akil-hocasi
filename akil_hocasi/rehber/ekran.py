@@ -50,7 +50,7 @@ class EkranAnalizi:
             ileti = f" “{self.hatalar[0][:140].strip(' .:')}” iletisi görünüyor." if self.hatalar else ""
             soru = f"Ekranda takıldım.{ileti} Sonraki adım nedir?"
             return f"{soru} {not_}".strip() if not_ else soru
-        ad = self.sistem.kisa
+        ad = self.sistem.ad_cumle
         if self.hatalar:
             ileti = self.hatalar[0][:140].strip(" .:")
             tur = "uyarısı" if re.search(r"uyar", katla(ileti)) else "hatası"

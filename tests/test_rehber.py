@@ -270,7 +270,7 @@ def test_ekran_tanima_maskeler_ve_bolum_bulur(kutuphane, tmp_path):
     assert "12345678950" not in a.metin
     assert a.hatalar == ["Kullanıcının bu birimde yetkisi bulunmamaktadır"]
     assert a.bolumler and a.bolumler[0].baslik == "Sık Karşılaşılan Hatalar"
-    assert "yetkisi bulunmamaktadır" in a.soru_onerisi() and a.soru_onerisi().startswith("MYS (HYS) ekranında")
+    assert "yetkisi bulunmamaktadır" in a.soru_onerisi() and a.soru_onerisi().startswith("MYS ekranında")
     bos = ekrani_coz("Merhaba dünya")
     assert not bos.tanindi and bos.soru_onerisi() == "Ekranda takıldım. Sonraki adım nedir?"
 

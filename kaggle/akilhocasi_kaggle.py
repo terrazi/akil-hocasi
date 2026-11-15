@@ -269,8 +269,10 @@ def servisler(k, anlam=None):
     from akil_hocasi.cekirdek.dersler import DersHafizasi
     from akil_hocasi.cekirdek.strateji import StratejiDeposu
     from akil_hocasi.crawler.beyaz_liste import BIRINCIL
+    from akil_hocasi.rehber import SistemRehberi
     strateji, dersler = StratejiDeposu(k), DersHafizasi(k)
-    hat = CevapHatti(k, DogrulamaMotoru(k, BIRINCIL), strateji=strateji, dersler=dersler, anlam=anlam)
+    hat = CevapHatti(k, DogrulamaMotoru(k, BIRINCIL), strateji=strateji, dersler=dersler, anlam=anlam,
+                     rehber=SistemRehberi(k))
     return SimpleNamespace(hat=hat, kutuphane=k, dersler=dersler, strateji=strateji, yz=None, ayarlar=None)
 
 
@@ -305,6 +307,15 @@ def kutuphane_hazirla(veri: Path, tarama_dk: float) -> tuple[object, list[dict]]
         bildir(f"Çekirdek mevzuat: {paketi_yukle(t, paket)}")
     except subprocess.CalledProcessError as e:
         bildir(f"UYARI: çekirdek mevzuat indirilemedi: {e}")
+    kilavuz_dosyalari = girdide_bul("kilavuzlar.jsonl")      # GitHub'da toplanmış sistem kullanım kılavuzları
+    if kilavuz_dosyalari:
+        from akil_hocasi.rehber import kilavuz_kaydi_yukle
+        sayac: dict[str, int] = {}
+        for satir in kilavuz_dosyalari[0].read_text("utf-8").splitlines():
+            if satir.strip():
+                sonuc = kilavuz_kaydi_yukle(k, json.loads(satir))
+                sayac[sonuc] = sayac.get(sonuc, 0) + 1
+        bildir(f"Sistem kılavuzları: {sayac}")
     if tarama_dk > 0:
         bildir(f"TOGÜ sayfaları taranıyor (en çok {tarama_dk:g} dk)")
         is_ = threading.Thread(target=t.calistir, args=("derin", lambda m: None), daemon=True)
@@ -347,6 +358,12 @@ def veri(arg) -> None:
         birlestir(onceki_turlar, veri_k)
         bildir(f"Önceki {len(onceki_turlar)} veri turu birleştirildi; kaldığı yerden sürüyor")
     k, ek_sorular = kutuphane_hazirla(veri_k, arg.tarama_dk)
+    from akil_hocasi.rehber import kilavuz_sorulari
+    ks = kilavuz_sorulari(k)
+    if ks:                                # sistem kullanımı: kılavuz başlığı/iletisinden; üçte biri sınava ayrılır
+        ek_sorular = ks + ek_sorular
+        bildir(f"Kılavuz soruları: {len(ks)} ({sum(1 for x in ks if x['tur'] == 'kilavuz_islem')} işlem, "
+               f"{sum(1 for x in ks if x['tur'] == 'kilavuz_hata')} hata iletisi)")
     gorus_ogeleri = gorusleri_topla(k, veri_k, arg.gorus_dk)
     from akil_hocasi.yz.damitma import Damitici, OgretmenModeli
     sunucular, bin_k = [], None

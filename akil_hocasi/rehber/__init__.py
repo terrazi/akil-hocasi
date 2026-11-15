@@ -16,6 +16,7 @@ from .kilavuz import KILAVUZ_TURLERI, KilavuzBelgesi, ayristir, kilavuz_etiketi,
 from .sistemler import SISTEMLER, Sistem, sistem, sistem_bul
 
 __all__ = ["SISTEMLER", "Sistem", "SistemRehberi", "EkranAnalizi", "KilavuzBelgesi", "KILAVUZ_TURLERI", "ayristir",
+           "kilavuz_sorulari", "kilavuz_kaydi_yukle",
            "ekrani_coz", "kilavuz_etiketi", "sayfa_goruntusu", "sistem", "sistem_bul", "kullanim_sorusu_mu"]
 
 _KULLANIM = re.compile(
@@ -126,3 +127,66 @@ class SistemRehberi:
             from .toplayici import KilavuzToplayici
             self._toplayici = KilavuzToplayici(self.kutuphane, self.depo)
         return self._toplayici
+
+
+_SORU_KALIPLARI = (
+    "{kisa} üzerinde “{baslik}” işlemini adım adım nasıl yaparım?",
+    "“{baslik}” işlemi için {kisa} içinde hangi menüden başlamalıyım ve hangi adımları izlemeliyim?",
+    "{kisa} ekranında “{baslik}” işlemini nasıl tamamlarım?",
+)
+_ILETI = re.compile(r"[“\"]([^”\"]{12,140})[”\"]\s*(?:hatası|uyarısı|mesajı|iletisi|ibaresi|ifadesi)", re.IGNORECASE)
+
+
+def kilavuz_sorulari(kutuphane, sinir: int = 400) -> list[dict]:
+    """Kılavuz bölümlerinden sistem kullanımı soruları: bölüm başlığı (görev) ve kılavuzda geçen hata/uyarı iletileri.
+
+    Sorunun içeriği kılavuzun kendi metninden gelir (başlık ya da ileti birebir); dayanağı o bölümdür. Eğitim verisinde
+    ve sınavda (dayanak bulundu mu?) kullanılır; sınava ayrılanlar eğitime girmez (damitma.bolum_sec).
+    """
+    import hashlib
+
+    sorular, goruldu = [], set()
+    for k in kutuphane.belgeleri_listele("KLV:", KILAVUZ_TURLERI):
+        s = sistem(k["kimlik"].split(":")[1])
+        if s is None:
+            continue
+        for p in kutuphane.belge_maddeleri(k["kimlik"]):
+            dayanak = [f"{p.belge_kimlik}/{p.madde_no}"]
+            b = re.sub(r"^[\dIVX]+(?:\.\d+)*[.)]?\s+|^[A-H][.)]\s+", "", (p.baslik or "").strip())
+            adim_sayisi = len(re.findall(r"(?m)^\s*(?:\d{1,2}\s*[-.)]|[•●▪\-–]\s)", p.metin))
+            if 6 <= len(b) <= 80 and _GOREV_BASLIGI.search(b) and (adim_sayisi >= 2 or len(p.metin) >= 200):
+                anahtar = (s.kimlik, katla(b))
+                if anahtar not in goruldu:
+                    goruldu.add(anahtar)
+                    i = int(hashlib.md5(f"{s.kimlik}{b}".encode()).hexdigest(), 16) % len(_SORU_KALIPLARI)
+                    sorular.append({"id": f"klv-{hashlib.sha1((p.belge_kimlik + b).encode()).hexdigest()[:10]}",
+                                    "soru": _SORU_KALIPLARI[i].format(kisa=s.ad_cumle, baslik=b), "dayanak": dayanak,
+                                    "tur": "kilavuz_islem", "sistem": s.kimlik})
+            for m in _ILETI.finditer(p.metin):
+                ileti = re.sub(r"\s+", " ", m.group(1)).strip(" .")
+                anahtar = (s.kimlik, katla(ileti))
+                if anahtar in goruldu:
+                    continue
+                goruldu.add(anahtar)
+                tur = "uyarısı" if "uyar" in katla(m.group(0)) else "hatası"
+                sorular.append({"id": f"klv-{hashlib.sha1((p.belge_kimlik + ileti).encode()).hexdigest()[:10]}",
+                                "soru": f"{s.ad_cumle} ekranında “{ileti}” {tur} alıyorum. Ne yapmalıyım?",
+                                "dayanak": dayanak, "tur": "kilavuz_hata", "sistem": s.kimlik})
+    return sorular[:sinir]
+
+
+def kilavuz_kaydi_yukle(kutuphane, kayit: dict) -> str:
+    """kilavuz_topla çıktısındaki bir kılavuzu (bölümleriyle) kütüphaneye yazar (Kaggle veri turu)."""
+    from ..library.ayristirici import MaddeParcasi
+    import hashlib
+
+    bolumler = [MaddeParcasi(madde_no=str(b["no"]), metin=b["metin"], baslik=b.get("baslik", ""))
+                for b in kayit.get("bolumler", []) if b.get("metin")]
+    if not bolumler:
+        return "bos"
+    metin = "\n\n".join(f"{b.baslik}\n{b.metin}" for b in bolumler)
+    return kutuphane.belge_kaydet(
+        tur="kilavuz", kimlik=kayit["kimlik"], baslik=kayit["baslik"], metin=metin,
+        sha256=hashlib.sha256(metin.encode("utf-8")).hexdigest(), kaynak_url=kayit.get("url", ""),
+        kaynak_turu="Kullanım kılavuzu", birim=kayit.get("sistem", ""), rv=kayit.get("surum", ""),
+        yayin_tarihi=kayit.get("tarih", ""), maddeler=bolumler)
