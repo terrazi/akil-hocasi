@@ -125,6 +125,21 @@ SENTEZ_GOREVI = (
     "türe ya da duruma göre koşullu yaz ('657/4-A memuru ise …; 4/B ise …') ve eksik bilgiyi acik_nokta'ya yaz. "
     "dogrudan_cevap=true iken kisa_cevap boş bırakılmaz. Yalnızca istenen JSON'u döndür.")
 
+KILAVUZ_EKI = (
+    " Kaynak bir kullanım kılavuzu ise (etiketinde sayfa no 's.' geçer): adimlar'ı kılavuzdaki sırayla yaz; ekran, "
+    "menü, düğme ve alan adlarını kılavuzdaki yazımıyla çift tırnak içinde ver (örn. “Kaydet” düğmesine basılır); menü "
+    "yolunu 'A > B > C' biçiminde yaz; kılavuzda geçmeyen hiçbir ekran, menü ya da düğme adı yazma. İşlemi kullanıcı "
+    "kendisi yapar: program sisteme girmez. Hata iletisi soruluyorsa kılavuzda o iletiye karşılık gelen çözümü yaz; "
+    "yoksa acik_nokta'ya kılavuzda bulunamadığını yaz.")
+
+
+def sentez_gorevi(kaynaklar: list[Kaynak]) -> str:
+    """Sentez görevi; kaynaklar arasında kullanım kılavuzu varsa kılavuz kuralları eklenir."""
+    if any(k.pasaj.belge_turu in ("kilavuz", "kilavuz_yerel") for k in kaynaklar):
+        return SENTEZ_GOREVI + KILAVUZ_EKI
+    return SENTEZ_GOREVI
+
+
 ELESTIRI_SEMASI = {
     "type": "object",
     "properties": {
@@ -166,7 +181,7 @@ class CevapHatti:
                  cevrimici: list[Saglayici] | None = None,
                  yargi: list[Saglayici] | None = None,
                  depo=None, cevrimici_mi: Callable[[], bool] = lambda: True,
-                 ogrenme=None, siralayici=None, strateji=None, dersler=None, anlam=None):
+                 ogrenme=None, siralayici=None, strateji=None, dersler=None, anlam=None, rehber=None):
         self.kutuphane = kutuphane
         self.dogrulama = dogrulama
         self.model = model or BosModel()
@@ -179,6 +194,7 @@ class CevapHatti:
         self.strateji = strateji        # yordam ayarları (çekirdek strateji deposu)
         self.dersler = dersler          # ders hafızası
         self.anlam = anlam              # anlam dizini (vektör araması)
+        self.rehber = rehber            # sistem rehberi (kullanım kılavuzları)
         self._yerel = threading.local()          # gelişim sınavına özel durum (kullanıcı soruları etkilenmez)
 
     # ------------------------------------------------------------------ ayar ve ders erişimi
@@ -250,7 +266,8 @@ class CevapHatti:
         n_aday = int(self.ayar("tarama", "aday_sayisi"))
         for alt in [istek] + [a for a in alt_sorular if a != istek]:
             self._tara(alt, ek, havuz, n_aday)
-        dk.ekle("arastir", f"Taramada {len(havuz)} aday hüküm")
+        kilavuzdan = self._kilavuz_tara(istek, havuz)
+        dk.ekle("arastir", f"Taramada {len(havuz)} aday hüküm" + (f" ({kilavuzdan} kılavuz bölümü)" if kilavuzdan else ""))
 
         yeterli = self._dogrudan_mi(istek, havuz)
         if mod == "hizli" and not yeterli:
@@ -363,6 +380,28 @@ class CevapHatti:
                     p.skor = max(p.skor, 50.0)
                     havuz[p.madde_id] = p
 
+    def _kilavuz_tara(self, istek: str, havuz: dict[int, Pasaj]) -> int:
+        """Soru bir sistemin kullanımıyla ilgiliyse o sistemin kılavuz bölümlerini havuza ekler (en iyi iki bölüm
+        seçimde üst sıraya gelecek kadar öne alınır; mevzuat kaynaklarının yerini almaz)."""
+        if self.rehber is None:
+            return 0
+        try:
+            from ..rehber import kullanim_sorusu_mu
+            s, kalip = kullanim_sorusu_mu(istek)
+            if s is None and not kalip:
+                return 0
+            bolumler = self.rehber.ara(istek, s.kimlik if s else None, limit=4)
+        except Exception:  # noqa: BLE001 - rehber yoksa mevzuat taraması yeter
+            return 0
+        if not bolumler:
+            return 0
+        tavan = max((p.skor for p in havuz.values()), default=1.0) or 1.0
+        for i, p in enumerate(bolumler):
+            if s is not None and kalip and i < 2:
+                p.skor = max(p.skor, tavan * (1.05 - 0.1 * i))
+            havuz.setdefault(p.madde_id, p)
+        return len(bolumler)
+
     def _tara(self, sorgu: str, ek: list[str], havuz: dict[int, Pasaj], n_aday: int) -> None:
         kelime = self.kutuphane.ara(sorgu, limit=max(4, n_aday // 2 + 2), ek_terimler=ek)
         for p in kelime:
@@ -460,7 +499,7 @@ class CevapHatti:
         cevap.acik_nokta = str(veri.get("acik_nokta") or "")
 
     def _model_ile_sentez(self, cevap: Cevap, dogrudan: bool, zorluk: str, dersler: list[str]) -> None:
-        sistem = self._sentez_sistemi(SENTEZ_GOREVI, dersler)
+        sistem = self._sentez_sistemi(sentez_gorevi(cevap.kaynaklar), dersler)
         n_ornek = int(self.ayar("sentez", "ornek_sayisi"))
         if self.ogrenme is not None and n_ornek:
             for o in self.ogrenme.benzer_ornekler(cevap.soru, n_ornek):
@@ -518,7 +557,8 @@ class CevapHatti:
             cevap.kaynaklar = list(secilen)
             puan_once = self._taslak_puani(cevap)
             veri = self._model_cagir(
-                self._sentez_sistemi(DUZELTME_GOREVI, dersler),
+                self._sentez_sistemi(DUZELTME_GOREVI + (KILAVUZ_EKI if sentez_gorevi(cevap.kaynaklar) != SENTEZ_GOREVI
+                                                        else ""), dersler),
                 taslak_girdisi(cevap.soru, cevap.kaynaklar, cevap.cozumleme) + f"\n\nÖNCEKİ TASLAK:\n{taslak}"
                 + "\n\nDENETÇİ SORUNLARI:\n" + "\n".join(f"- [{s.get('tur')}] {s['aciklama'][:220]}" for s in sorunlar)
                 + ("\n\nSINAMADA ÇIKARILANLAR:\n" + "\n".join(f"- {c['metin'][:160]} → {c['neden'][:100]}"

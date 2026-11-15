@@ -50,6 +50,7 @@ class Servisler:
     strateji: object
     dersler: object
     bilgi_paketi: object = None                  # çekirdek bilgi paketini işleyen arka plan iş parçacığı
+    rehber: object = None                        # Sistem Rehberi (kullanım kılavuzları, ekran tanıma)
 
 
 _cevrimici_onbellek = {"zaman": 0.0, "durum": True}
@@ -123,10 +124,12 @@ def servisleri_kur() -> Servisler:
     strateji = StratejiDeposu(kutuphane)
     dersler = DersHafizasi(kutuphane)
     yz = YZYoneticisi(yollar, ayarlar, kutuphane)
+    from .rehber import SistemRehberi
+    rehber = SistemRehberi(kutuphane, depo)
     hat = CevapHatti(kutuphane, DogrulamaMotoru(kutuphane, BIRINCIL), BosModel(), cevrimici=saglayicilar,
                      depo=depo, cevrimici_mi=cevrimici_mi,
                      ogrenme=ogrenme if ayarlar.al("ogrenme.acik", True) else None, siralayici=siralayici,
-                     strateji=strateji, dersler=dersler, anlam=yz.anlam)
+                     strateji=strateji, dersler=dersler, anlam=yz.anlam, rehber=rehber)
     # Kaynak havuzu: eklenti gözlemleri ve gömülü tarayıcı motoru aynı değerlendiriciye ve dosya kuyruğuna akar
     from .gozlem.dosya_kuyrugu import DosyaKuyrugu
     from .gozlem.eslestirme import yerel_mesajlasma_kaydet
@@ -149,7 +152,7 @@ def servisleri_kur() -> Servisler:
         paket_is.start()
     return Servisler(yollar, ayarlar, kutuphane, depo, tarayici, hat, ocr,
                      Zamanlayici(ayarlar.al("guncelleme", {}), kimlik), kimlik, ogrenme, siralayici,
-                     gozlem, dosya_kuyrugu, motor, yz, strateji, dersler, paket_is)
+                     gozlem, dosya_kuyrugu, motor, yz, strateji, dersler, paket_is, rehber)
 
 
 _MUTEX = None

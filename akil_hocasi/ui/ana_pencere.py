@@ -26,6 +26,7 @@ from .kisayol import GenelKisayol, bosta_kalma_sn
 from .sayfalar import (AyarlarSayfasi, BelgeDeposuSayfasi, KaynakHavuzuSayfasi, NelerDegistiSayfasi,
                        YakindaSayfasi, ZekaSayfasi)
 from .tema import R
+from .rehber_sayfasi import RehberSayfasi
 from .yazi_sayfasi import YaziHazirlamaSayfasi
 
 log = logging.getLogger("akilhocasi")
@@ -239,6 +240,8 @@ class AnaPencere(QMainWindow):
             ("danisma", "danisma", "Danışma", "Yapay zekâ ile danışma (ana ekran)"),
             ("yakala", "yakala", "Yakala", "Hızlı Yakala: ekrandan metin al"),
             ("yazi", "yazi", "Yazı", "Yazı Hazırlama"),
+            ("rehber", "yol", "Sistemler", "Sistem Rehberi: EBYS, MYS, KBS, HİTAP, SGK, YÖKSİS, EKAP, Kariyer Kapısı, "
+                                            "ÖSYM ekranlarında adım adım yardım"),
             ("hesap", "hesap", "Hesapla", "Hesaplama"),
             ("kontrol", "kontrol", "Kontrol", "Ödeme / evrak ön kontrolü"),
             ("depo", "depo", "Depo", "Belge Deposu"),
@@ -281,6 +284,9 @@ class AnaPencere(QMainWindow):
                                  "kontrol listeleri ve Sayıştay bulgularına göre denetler.", "Faz 5",
                                  ["Eksik belge listesi", "Tutar ve ekonomik kod biçim kontrolü",
                                   "TC / IBAN sağlama kontrolü", "Olası Sayıştay bulgusu uyarısı"], R["satinalma"])
+        self.rehber_sayfa = RehberSayfasi(s)
+        self.rehber_sayfa.yakala_istendi.connect(lambda: self.hizli_yakala("rehber"))
+        self.rehber_sayfa.sor_istendi.connect(lambda soru: (self._sayfa("danisma"), self.danisma.sor(soru, "derin")))
         self.depo_sayfa = BelgeDeposuSayfasi(s.depo)
         self.depo_sayfa.guncelle_istendi.connect(lambda: self.guncelle(["derin"]))
         self.degisti = NelerDegistiSayfasi(s.kutuphane, s.ogrenme, s.siralayici)
@@ -304,7 +310,8 @@ class AnaPencere(QMainWindow):
         self.zeka.ozel_ekle_istendi.connect(self._ozel_model_ekle)
         self.zeka.surum_indir_istendi.connect(self._surum_modeli_indir)
         self.zeka.paket_istendi.connect(self._egitim_paketi)
-        self.sayfalar = {"danisma": self.danisma, "yazi": self.yazi, "hesap": hesap, "kontrol": kontrol,
+        self.sayfalar = {"danisma": self.danisma, "yazi": self.yazi, "rehber": self.rehber_sayfa, "hesap": hesap,
+                         "kontrol": kontrol,
                          "depo": self.depo_sayfa, "havuz": self.havuz, "degisti": self.degisti, "zeka": self.zeka,
                          "ayarlar": self.ayarlar_sayfa}
         for anahtar, sayfa in self.sayfalar.items():
@@ -536,13 +543,23 @@ class AnaPencere(QMainWindow):
             QTimer.singleShot(2_000, self._anlam_dizinle)
 
     # ================================================================== Hızlı Yakala
-    def hizli_yakala(self) -> None:
+    def hizli_yakala(self, hedef: str = "") -> None:
+        """hedef="rehber": seçilen ekran bölgesi Sistem Rehberi'nde tanınır (Ekranımda takıldım)."""
         gorunurdu = self.isVisible() and not self.isMinimized()
         self.hide()
 
+        def secildi(img):
+            if hedef == "rehber":
+                self.goster()
+                self._sayfa("rehber")
+                self.rehber_sayfa.ekran_goruntusu_isle(img)
+            else:
+                self._geri_getir(gorunurdu)
+                self.goruntu_ac(img)
+
         def baslat():
             self.katman = YakalamaKatmani()
-            self.katman.secildi.connect(lambda img: (self._geri_getir(gorunurdu), self.goruntu_ac(img)))
+            self.katman.secildi.connect(secildi)
             self.katman.iptal.connect(lambda: self._geri_getir(gorunurdu))
             self.katman.show()
             self.katman.activateWindow()
@@ -560,11 +577,17 @@ class AnaPencere(QMainWindow):
         p = CanliMetinPenceresi(img, self.s.ocr, self.s.ayarlar.al("gizlilik.maske_varsayilan", True))
         p.sor.connect(self._yakalanani_sor)
         p.yaziya.connect(self.yaziya_gonder)
+        p.rehbere.connect(self._rehbere_gonder)
         p.duzeltildi.connect(self._ocr_duzeltildi)
         p.show()
         p.raise_()
         p.activateWindow()
         self._pencereler = [w for w in self._pencereler if w.isVisible()] + [p]
+
+    def _rehbere_gonder(self, metin: str) -> None:
+        self.goster()
+        self._sayfa("rehber")
+        self.rehber_sayfa.ekran_metni_isle(metin)
 
     def _yakalanani_sor(self, metin: str) -> None:
         self.goster()
@@ -682,6 +705,8 @@ class AnaPencere(QMainWindow):
 
     def _gorev_bitti(self, rapor) -> None:
         log.info("%s: %s; hata: %d", rapor.gorev, rapor.ozet, len(rapor.hatalar))
+        if rapor.gorev == "haftalik":
+            self.rehber_sayfa.yenile()                   # haftalık taramada kılavuzlar da güncellenir
         for h in rapor.hatalar[:5]:
             log.warning("  %s", h)
         if rapor.yeni or rapor.guncellenen:
@@ -907,6 +932,7 @@ class AnaPencere(QMainWindow):
         for c in (self._indirme, self._anlam_calisani, self._zeka, getattr(self, "_surum_calisani", None)):
             if c and c.isRunning():
                 c.durdur.set()
+        self.rehber_sayfa.durdur()
         yazi_calisani = getattr(self.yazi, "calisan", None)
         danisma_calisani = getattr(self.danisma, "calisan", None)
         for t in (self._tarama, self._takip, self._ogrenme, self._aday, self._indirme, self._anlam_calisani, self._zeka,

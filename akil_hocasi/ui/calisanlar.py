@@ -289,3 +289,23 @@ class SurumModeliCalisani(QThread):
             self.bitti.emit(self.yz.ozel_model_ekle(gguf))
         except Exception as e:  # noqa: BLE001 - kullanıcıya gösterilir
             self.hata.emit(str(e))
+
+
+class KilavuzCalisani(QThread):
+    """Sistem kılavuzlarını resmî sitelerden bulur ve günceller (Sistem Rehberi)."""
+    ilerleme = Signal(str)
+    bitti = Signal(object)                      # ToplamaRaporu
+
+    def __init__(self, toplayici, sistemler: list[str] | None = None, parent=None):
+        super().__init__(parent)
+        self.toplayici, self.sistemler = toplayici, sistemler
+        self.durdur = toplayici.durdur
+
+    def run(self) -> None:
+        self.durdur.clear()
+        try:
+            rapor = self.toplayici.topla(self.sistemler, ilerleme=self.ilerleme.emit)
+        except Exception as e:  # noqa: BLE001 - kullanıcıya rapor olarak gösterilir
+            from ..rehber.toplayici import ToplamaRaporu
+            rapor = ToplamaRaporu(hatalar=[str(e)])
+        self.bitti.emit(rapor)

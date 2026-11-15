@@ -195,6 +195,75 @@ def gorus_dene(arg) -> None:
                           "alinti": len(g["alintilar"])}, ensure_ascii=False))
 
 
+def kilavuz_veri_seti() -> str:
+    return f"{kullanici()}/akilhocasi-kilavuzlar"
+
+
+def kilavuz_veri_seti_hazir() -> bool:
+    c = subprocess.run(["kaggle", "datasets", "status", kilavuz_veri_seti()], capture_output=True, text=True)
+    return c.returncode == 0 and "ready" in c.stdout.lower()
+
+
+def _kilavuzlari_derle(arg) -> list[dict]:
+    """Sistem kullanım kılavuzlarını resmî sitelerden toplar (programın kendi toplayıcısıyla, GPU'suz)."""
+    import tempfile
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from akil_hocasi.crawler.depo import BelgeDeposu
+    from akil_hocasi.library.db import Kutuphane
+    from akil_hocasi.rehber.toplayici import KilavuzToplayici
+    gecici = Path(tempfile.mkdtemp())
+    k = Kutuphane(gecici / "k.db")
+    t = KilavuzToplayici(k, BelgeDeposu(gecici / "depo"), sayfa_siniri=arg.sayfa_siniri, belge_siniri=arg.belge_siniri)
+    sistemler = [s.strip().upper() for s in arg.sistem.split(",") if s.strip()] or None
+    rapor = t.topla(sistemler, ilerleme=lambda m: print("·", m, flush=True))
+    print(f"\nKILAVUZ TOPLAMA: {rapor.ozet()}")
+    for s, d in sorted(rapor.sistemler.items()):
+        print(f"  {s}: {json.dumps(d, ensure_ascii=False)}")
+    for h in rapor.hatalar[:60]:
+        print("  HATA", h[:240])
+    belgeler = []
+    for b in k.belgeleri_listele("KLV:"):
+        bolumler = [{"no": p.madde_no, "baslik": p.baslik, "metin": p.metin} for p in k.belge_maddeleri(b["kimlik"])]
+        belgeler.append({"kimlik": b["kimlik"], "sistem": b["birim"], "baslik": b["baslik"], "url": b["kaynak_url"],
+                         "tarih": b["yayin_tarihi"], "surum": b["rv"], "bolumler": bolumler})
+    return belgeler
+
+
+def kilavuz_dene(arg) -> None:
+    """Kılavuz toplayıcıyı ve ayrıştırıcıyı gerçek resmî sitelerde dener (Kaggle gerekmez)."""
+    from akil_hocasi.rehber.kilavuz import adimlari_bul, etiketleri_bul, yollari_bul
+    belgeler = _kilavuzlari_derle(arg)
+    print(f"\nKÜTÜPHANEYE GİREN KILAVUZ: {len(belgeler)}")
+    for b in belgeler:
+        print(json.dumps({"sistem": b["sistem"], "baslik": b["baslik"][:110], "url": b["url"], "tarih": b["tarih"],
+                          "surum": b["surum"], "bolum": len(b["bolumler"])}, ensure_ascii=False))
+        for x in b["bolumler"][:: max(1, len(b["bolumler"]) // 3)][:3]:
+            tum = x["baslik"] + "\n" + x["metin"]
+            print("   ·", x["no"], "|", x["baslik"][:80], "| adım:", [a[:70] for a in adimlari_bul(x["metin"].splitlines())[:3]],
+                  "| etiket:", etiketleri_bul(tum)[:6], "| yol:", yollari_bul(tum)[:2])
+
+
+def kilavuz_topla(arg) -> None:
+    """Kılavuzları toplar ve özel 'akilhocasi-kilavuzlar' veri setine koyar: veri turunda sistem kullanımı soruları
+    ve kılavuz kaynaklı eğitim örnekleri buradan üretilir."""
+    belgeler = _kilavuzlari_derle(arg)
+    klasor = Path("kaggle_gonder") / "kilavuzlar_ds"
+    shutil.rmtree(klasor, ignore_errors=True)
+    klasor.mkdir(parents=True)
+    (klasor / "kilavuzlar.jsonl").write_text("".join(json.dumps(b, ensure_ascii=False) + "\n" for b in belgeler),
+                                             "utf-8")
+    (klasor / "dataset-metadata.json").write_text(json.dumps(
+        {"title": "akilhocasi-kilavuzlar", "id": kilavuz_veri_seti(), "licenses": [{"name": "other"}]}), "utf-8")
+    if not belgeler:
+        print("Kılavuz bulunamadı; veri seti güncellenmedi")
+        return
+    if kilavuz_veri_seti_hazir():
+        kaggle("datasets", "version", "-p", str(klasor), "-m", f"{len(belgeler)} kılavuz", yakala=True)
+    else:
+        kaggle("datasets", "create", "-p", str(klasor), yakala=True)
+    print(f"Paylaşıldı: {kilavuz_veri_seti()} ← {len(belgeler)} kılavuz")
+
+
 def derleme_veri_seti() -> str:
     return f"{kullanici()}/akilhocasi-llama-bin"
 
@@ -369,7 +438,8 @@ def kalan_gpu_saat() -> tuple[float | None, str]:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("islem", choices=["baslat", "durum", "dogrula", "paylas", "gorus_dene", "gorus_topla"])
+    p.add_argument("islem", choices=["baslat", "durum", "dogrula", "paylas", "gorus_dene", "gorus_topla",
+                                     "kilavuz_dene", "kilavuz_topla"])
     p.add_argument("asama", choices=["veri", "egit", "sinav"], nargs="?", default="veri")
     p.add_argument("--tur", type=int, default=1, help="veri turu numarası (1, 2, 3…)")
     p.add_argument("--veri-turu", type=int, default=1, help="eğitimde kullanılacak veri turu sayısı")
@@ -386,9 +456,12 @@ def main() -> None:
     p.add_argument("--islemci", action="store_true", help="sınav GPU'suz (Kaggle CPU oturumu GPU kotası harcamaz)")
     p.add_argument("--model-adi", default="", help="sınanacak model (ör. akilhocasi-4b-20261114)")
     p.add_argument("--veri-seti", nargs="*", default=[], help="kullanıcı eğitim paketi veri seti (kullanici/ad)")
+    p.add_argument("--sistem", default="", help="kılavuz: yalnız bu sistemler (ör. EBYS,MYS)")
+    p.add_argument("--sayfa-siniri", type=int, default=40, help="kılavuz: sistem başına en çok keşif sayfası")
+    p.add_argument("--belge-siniri", type=int, default=20, help="kılavuz: sistem başına en çok kılavuz")
     arg = p.parse_args()
     {"baslat": baslat, "durum": durum, "dogrula": dogrula, "paylas": paylas, "gorus_dene": gorus_dene,
-     "gorus_topla": gorus_topla}[arg.islem](arg)
+     "gorus_topla": gorus_topla, "kilavuz_dene": kilavuz_dene, "kilavuz_topla": kilavuz_topla}[arg.islem](arg)
 
 
 if __name__ == "__main__":

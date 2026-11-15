@@ -29,6 +29,15 @@ IKINCIL = [
     "memurlar.net",
 ]
 
+# Yalnız kılavuz toplayıcı için ek resmî alanlar (sistem kullanım kılavuzlarının yayımlandığı kurum siteleri).
+# Gözlem eklentisinin listesine girmez; bu alanlarda yalnız herkese açık sayfa ve belge okunur.
+KILAVUZ_EK = [
+    "muhasebat.gov.tr",      # Muhasebat GM eski alan adı (KBS/MYS kılavuzları)
+    "osym.gov.tr",           # KPSS kılavuzları
+    "cbiko.gov.tr",          # Kariyer Kapısı kılavuzları
+    "kamusm.bilgem.tubitak.gov.tr",   # e-imza yardım belgeleri
+]
+
 ONERI_LISTESI: set[str] = set()   # taramada görülen, beyaz listede olmayan alanlar
 
 
@@ -53,6 +62,13 @@ def izinli_mi(url: str) -> bool:
     if u.scheme not in ("https", "http"):
         return False
     return birincil_mi(url) or ikincil_mi(url)
+
+
+def kilavuz_izinli_mi(url: str) -> bool:
+    u = urlparse(url)
+    if u.scheme not in ("https", "http"):
+        return False
+    return izinli_mi(url) or _eslesir(alan(url), KILAVUZ_EK)
 
 
 def oneri_ekle(url: str) -> None:

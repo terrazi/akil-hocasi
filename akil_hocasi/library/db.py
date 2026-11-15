@@ -150,6 +150,9 @@ class Pasaj:
 
     @property
     def etiket(self) -> str:
+        if self.belge_turu in ("kilavuz", "kilavuz_yerel"):
+            from ..rehber.kilavuz import kilavuz_etiketi
+            return kilavuz_etiketi(self.belge_baslik, self.madde_no, self.baslik)
         if self.madde_no and self.madde_no != "Giriş":
             return f"{self.belge_baslik}, md. {self.madde_no}"
         return self.belge_baslik
@@ -385,17 +388,26 @@ class Kutuphane:
 
     # ------------------------------------------------------------------ arama
     def ara(self, sorgu: str, limit: int = 8, ek_terimler: Iterable[str] = (),
-            tarih: str | None = None) -> list[Pasaj]:
-        """Güncel (veya verilen tarihte yürürlükte olan) maddelerde arar."""
+            tarih: str | None = None, turler: Iterable[str] | None = None) -> list[Pasaj]:
+        """Güncel (veya verilen tarihte yürürlükte olan) maddelerde arar. turler: yalnız bu belge türleri."""
         fts = fts_sorgusu(sorgu, ek_terimler)
         if not fts:
             return []
+        tur_kumesi = set(turler) if turler else None
         with self._kilit:
             try:
-                satirlar = self.db.execute(
-                    "SELECT rowid, bm25(maddeler_fts, 1.0, 3.0, 0.5) AS skor FROM maddeler_fts"
-                    " WHERE maddeler_fts MATCH ? ORDER BY skor LIMIT ?",
-                    (fts, limit * 3)).fetchall()
+                if tur_kumesi:
+                    yer = ",".join("?" * len(tur_kumesi))
+                    satirlar = self.db.execute(
+                        "SELECT f.rowid AS rowid, bm25(maddeler_fts, 1.0, 3.0, 0.5) AS skor FROM maddeler_fts f"
+                        " JOIN maddeler m ON m.id=f.rowid JOIN belgeler b ON b.id=m.belge_id"
+                        f" WHERE maddeler_fts MATCH ? AND b.tur IN ({yer}) ORDER BY skor LIMIT ?",
+                        (fts, *sorted(tur_kumesi), limit * 3)).fetchall()
+                else:
+                    satirlar = self.db.execute(
+                        "SELECT rowid, bm25(maddeler_fts, 1.0, 3.0, 0.5) AS skor FROM maddeler_fts"
+                        " WHERE maddeler_fts MATCH ? ORDER BY skor LIMIT ?",
+                        (fts, limit * 3)).fetchall()
             except sqlite3.OperationalError:
                 return []
             pasajlar = []
@@ -404,6 +416,33 @@ class Kutuphane:
                 if p and (tarih is None or p.yururlukte):
                     pasajlar.append(p)
             return pasajlar[:limit]
+
+    def belgeleri_listele(self, kimlik_onek: str = "", turler: Iterable[str] | None = None) -> list[dict]:
+        """Güncel sürümüyle belgeler (kılavuz listesi gibi): kimlik, başlık, adres, dosya yolu, tarih, madde sayısı."""
+        kosul, deger = ["s.gecerlilik_bitis IS NULL"], []
+        if kimlik_onek:
+            kosul.append("b.kimlik LIKE ?")
+            deger.append(kimlik_onek.replace("%", "") + "%")
+        if turler:
+            turler = list(turler)
+            kosul.append(f"b.tur IN ({','.join('?' * len(turler))})")
+            deger.extend(turler)
+        with self._kilit:
+            satirlar = self.db.execute(
+                "SELECT b.kimlik, b.baslik, b.tur, b.kaynak_url, b.kaynak_turu, b.birim, b.durum, s.dosya_yolu,"
+                " s.rv, s.yayin_tarihi, s.indirme_tarihi,"
+                " (SELECT COUNT(*) FROM maddeler m WHERE m.surum_id=s.id) AS bolum"
+                " FROM belgeler b JOIN surumler s ON s.belge_id=b.id"
+                f" WHERE {' AND '.join(kosul)} ORDER BY b.baslik", deger).fetchall()
+            return [dict(r) for r in satirlar]
+
+    def belge_maddeleri(self, kimlik: str) -> list[Pasaj]:
+        """Belgenin güncel sürümündeki tüm maddeler/bölümler, sırasıyla."""
+        with self._kilit:
+            satirlar = self.db.execute(
+                "SELECT m.id FROM maddeler m JOIN belgeler b ON b.id=m.belge_id"
+                " WHERE b.kimlik=? AND m.yururluk_bitis IS NULL ORDER BY m.id", (kimlik,)).fetchall()
+            return [p for p in (self._pasaj(r["id"]) for r in satirlar) if p]
 
     def _pasaj(self, madde_id: int, skor: float = 0.0) -> Pasaj | None:
         r = self.db.execute(

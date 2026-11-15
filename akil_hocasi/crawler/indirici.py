@@ -9,6 +9,7 @@ import hashlib
 import threading
 import time
 import urllib.robotparser
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
@@ -76,8 +77,13 @@ class Indirici:
         rp = self._robots[kok]
         return True if rp is None else rp.can_fetch(KULLANICI_AJANI, url)
 
-    def getir(self, url: str, etag: str = "", last_modified: str = "") -> IndirmeSonucu:
-        if not beyaz_liste.izinli_mi(url):
+    def getir(self, url: str, etag: str = "", last_modified: str = "",
+              ek_izin: Callable[[str], bool] | None = None) -> IndirmeSonucu:
+        """ek_izin: belirli bir görev için beyaz listeye ek resmî alanlar (ör. kılavuz toplayıcı)."""
+        def izinli(u: str) -> bool:
+            return beyaz_liste.izinli_mi(u) or bool(ek_izin and ek_izin(u))
+
+        if not izinli(url):
             beyaz_liste.oneri_ekle(url)
             return IndirmeSonucu(url, 0, hata="Beyaz liste dışı alan")
         if not self._robots_izin(url):
@@ -93,7 +99,7 @@ class Indirici:
         except Exception as e:  # ağ yok, zaman aşımı
             return IndirmeSonucu(url, 0, hata=str(e))
         son_url = getattr(r, "url", url) or url
-        if son_url != url and not beyaz_liste.izinli_mi(son_url):
+        if son_url != url and not izinli(son_url):
             return IndirmeSonucu(url, 0, hata="Yönlendirme beyaz liste dışına çıktı")
         if r.status_code == 304:
             return IndirmeSonucu(url, 304, etag=etag, last_modified=last_modified, son_url=son_url)

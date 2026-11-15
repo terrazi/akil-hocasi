@@ -13,8 +13,10 @@ from urllib.parse import urlparse
 
 from ..core import dogrulayicilar as d
 from ..core.maskeleme import metni_maskele
-from ..core.turkce import alinti_normalle, katla
+from ..core.turkce import alinti_normalle, bosluk_normalle, katla
+from ..crawler import beyaz_liste
 from ..library.db import Kutuphane
+from ..rehber.kilavuz import arayuz_adlari
 from .modeller import Cevap, Cumle, Durum, Uyari
 
 _ALINTI = re.compile(r"[\"“]([^\"”]{12,})[\"”]")
@@ -145,7 +147,8 @@ class DogrulamaMotoru:
 
         # 1) Kaynak testi
         gecerli = [k for k in kaynaklar if _alan_beyaz_listede(k.pasaj.kaynak_url, self.beyaz_liste)
-                   or k.pasaj.belge_turu in ("togu_yerel", "kart")]
+                   or k.pasaj.belge_turu in ("togu_yerel", "kart", "kilavuz_yerel")
+                   or (k.pasaj.belge_turu == "kilavuz" and beyaz_liste.kilavuz_izinli_mi(k.pasaj.kaynak_url))]
         if not gecerli:
             cevap.uyarilar.append(Uyari("Kaynak", f"Beyaz liste dışı kaynak: {kaynaklar[0].pasaj.kaynak_url}", "hata"))
             return False, False
@@ -167,6 +170,16 @@ class DogrulamaMotoru:
             if alinti_normalle(m.group(1)) not in birlesik_n:
                 cevap.uyarilar.append(Uyari("Alıntı", f"Kaynakta birebir bulunmayan alıntı reddedildi: “{m.group(1)[:60]}…”", "hata"))
                 return False, False
+
+        # 3b) Arayüz testi: kılavuza dayanan cümledeki ekran, düğme, menü adları ve menü yolu parçaları kılavuzda
+        #     geçmeli. Kılavuzda olmayan ad uydurmadır; kullanıcıyı ekranda olmayan bir düğmeye yönlendirmez.
+        if any(k.pasaj.belge_turu in ("kilavuz", "kilavuz_yerel") for k in gecerli):
+            kaynak_k = bosluk_normalle(katla(" ".join(k.pasaj.baslik + " " + k.pasaj.metin for k in gecerli)))
+            for ad in arayuz_adlari(c.metin):
+                if bosluk_normalle(katla(ad)) not in kaynak_k:
+                    cevap.uyarilar.append(Uyari("Arayüz", f"Kılavuzda geçmeyen ekran/düğme/menü adı: “{ad[:60]}”; "
+                                                "cümle çıkarıldı", "hata"))
+                    return False, False
 
         # 6) Biçim testi (önce düzelt, sonra çapraz kontrol)
         for m in _EKO_GEVSEK.finditer(c.metin):

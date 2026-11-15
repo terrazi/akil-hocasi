@@ -100,6 +100,7 @@ class Tarayici:
                 self._derin(rapor, bildir)
             elif gorev == "haftalik":
                 self._cekirdek_mevzuat(rapor, bildir)
+                self._kilavuzlar(rapor, bildir)
             elif gorev == "sabah":
                 rapor.notlar.append("Özet yerel değişiklik kaydından hazırlandı")
         except Exception as e:  # tarama hiçbir zaman programı düşürmemeli
@@ -107,6 +108,18 @@ class Tarayici:
         rapor.bitis = datetime.now().isoformat(timespec="seconds")
         self.kutuphane.zamanlayici_yaz(gorev, rapor.bitis)
         return rapor
+
+    def _kilavuzlar(self, rapor: TaramaRaporu, bildir: IlerlemeFn) -> None:
+        """Sistem kullanım kılavuzları (EBYS, MYS, KBS, HİTAP...): yenileri bulunur, değişenler güncellenir."""
+        from ..rehber.toplayici import KilavuzToplayici
+
+        toplayici = KilavuzToplayici(self.kutuphane, self.depo)
+        toplayici.durdur = self.durdur
+        k = toplayici.topla(ilerleme=bildir)
+        rapor.yeni += k.yeni
+        rapor.guncellenen += k.guncellenen
+        rapor.hatalar.extend(k.hatalar[:20])
+        rapor.notlar.append("Kılavuzlar: " + k.ozet())
 
     def _hafif(self, rapor: TaramaRaporu, bildir: IlerlemeFn) -> None:
         bildir("Resmî Gazete'de yeni sayı kontrol ediliyor")

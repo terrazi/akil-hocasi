@@ -317,6 +317,7 @@ class GoruntuTuvali(QWidget):
 class CanliMetinPenceresi(QWidget):
     sor = Signal(str)
     yaziya = Signal(str)
+    rehbere = Signal(str)                # Sistem Rehberi: ekrandaki sistemi ve ilgili kılavuz sayfasını bul
     duzeltildi = Signal(str, str)        # (yanlış okunan, doğru) — öğrenme motoruna gider
 
     def __init__(self, img: QImage, ocr_hatti, maske_varsayilan: bool = True, parent=None):
@@ -362,6 +363,11 @@ class CanliMetinPenceresi(QWidget):
         sor.setIcon(ikon("danisma", "#FFFFFF", 16))
         sor.clicked.connect(lambda: self.sor.emit(self._metin(secili_oncelik=True)))
         arac.addWidget(sor)
+        rehber = QPushButton("  Bu ekranda takıldım")
+        rehber.setIcon(ikon("yol", R["metin"], 16))
+        rehber.setToolTip("Sistem Rehberi: ekrandaki sistemi (EBYS, MYS, KBS...) tanır, kılavuzdaki adımları gösterir")
+        rehber.clicked.connect(lambda: self.rehbere.emit(self._metin(secili_oncelik=False)))
+        arac.addWidget(rehber)
         yazi = QPushButton("  Yazı Hazırlama'ya gönder")
         yazi.setIcon(ikon("yazi", R["metin"], 16))
         yazi.clicked.connect(lambda: self.yaziya.emit(self._metin(secili_oncelik=False)))
