@@ -60,7 +60,8 @@ _GENEL_BAGLANTI = re.compile(r"^(?:buradan|burada|tıkla|tikla|indir|ekte|detay|
 _TARIH_ON = re.compile(r"^\s*\d{1,2}\s+[A-ZÇĞİÖŞÜa-zçğıöşü]+\s+\d{1,2}\s+[A-ZÇĞİÖŞÜa-zçğıöşü]+\s+\d{4}\s+"
                        r"[A-ZÇĞİÖŞÜa-zçğıöşü]+\s+")
 _DUYURU = re.compile(r"\b(ilan[ıi]?|alım ilanı|duyurusu|çağrı(?:sı)?|genelge(?:si)?|sonuç(?:ları)?|takvim(?:i)?|"
-                     r"haber|tebrik|toplantı|biyografi|başkan yardımcısı|telefon rehberi|iletişim bilgileri)\b",
+                     r"haber|tebrik|toplantı|biyografi|başkan yardımcısı|telefon rehberi|iletişim bilgileri|"
+                     r"uygulama esasları|usul ve esaslar|sertifika ilkeleri|politika(?:sı)?|yönetmeli[ğk]i?)\b",
                      re.IGNORECASE)
 _ARAYUZ_EYLEMI = re.compile(r"(tıkla|seçil|seçin|giril|girin|basıl|basın|buton|düğme|menü|ekran|sekme|"
                             r"alanı|alanın|alanına|giriş yap|kaydet|listele|sorgula|onayla|imzala|yükle)", re.IGNORECASE)

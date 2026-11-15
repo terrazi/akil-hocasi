@@ -26,8 +26,11 @@ _KULLANIM = re.compile(
     r"onaya\s+g[öo]nder|adım|ad[ıi]m)", re.IGNORECASE)
 
 _GOREV_BASLIGI = re.compile(
-    r"(olu[şs]tur|giri[şs]i|ekle|yaz|g[öo]nder|imzala|onay|sorgula|listele|d[üu]zenle|g[üu]ncelle|iptal|sil|"
-    r"aktar|y[üu]kle|tan[ıi]mla|hesapla|ba[şs]vur|i[şs]lemleri|raporla|yazd[ıi]r|ara|kayd)", re.IGNORECASE)
+    r"(?<![a-zçğıöşüA-ZÇĞİÖŞÜ])(olu[şs]tur|giri[şs]i|ekle|yaz|g[öo]nder|imzala|onay|sorgula|listele|d[üu]zenle|"
+    r"g[üu]ncelle|iptal|sil|aktar|y[üu]kle|tan[ıi]mla|hesapla|ba[şs]vur|i[şs]lem|raporla|yazd[ıi]r|arama|kayd|"
+    r"kay[ıi]t|giri[şs] yap|[şs]ifre|sevk|havale|teslim|devir|zimmet|ödeme|tahakkuk)", re.IGNORECASE)
+_GOREV_DEGIL = re.compile(r"^(?:şekil|sekil|tablo|resim|ek[-\s]?\d|doküman|dokuman|sayfa|not\b)|kılavuzun sonuna|"
+                          r"sürüm numarası|yayın tarihi|garanti|sorumluluk|yükümlülük", re.IGNORECASE)
 
 
 def gorev_basligi(baslik: str) -> str:
@@ -39,7 +42,8 @@ def gorev_basligi(baslik: str) -> str:
     parcalar = []
     for p in re.split(r"\s+—\s+", baslik or ""):
         p = re.sub(r"^[\s\-–—•:]*(?:\d{1,2}(?:[.)-]\d{0,2})*[.)-]?\s*|[A-HIVX]{1,4}[.)]\s+)?", "", p).strip(" .:;-–—")
-        if len(p) >= 6 and p[:1].isupper() and len(p.split()) <= 9 and katla(p) not in ("not", "uyari", "dikkat"):
+        if len(p) >= 6 and p[:1].isupper() and len(p.split()) <= 9 and katla(p) not in ("not", "uyari", "dikkat") \
+                and not _GOREV_DEGIL.search(p) and p.count(":") == 0:
             parcalar.append(p)
     adaylar = [p for p in dict.fromkeys(parcalar) if _GOREV_BASLIGI.search(p) and len(p) <= 80]
     return max(adaylar, key=len) if adaylar else ""
