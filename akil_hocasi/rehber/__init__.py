@@ -30,6 +30,21 @@ _GOREV_BASLIGI = re.compile(
     r"aktar|y[üu]kle|tan[ıi]mla|hesapla|ba[şs]vur|i[şs]lemleri|raporla|yazd[ıi]r|ara|kayd)", re.IGNORECASE)
 
 
+def gorev_basligi(baslik: str) -> str:
+    """Kılavuz bölüm başlığından görev adı ("Ödeme Emri Belgesi Oluşturma"); görev değilse boş.
+
+    Numara ve işaretler atılır; "A — B" birleşik başlıkta görev bildiren en uzun parça seçilir; küçük harfle başlayan
+    (cümle parçası), çok uzun ya da tek sözcüklük genel başlıklar görev sayılmaz. Metin kılavuzdaki gibi kalır.
+    """
+    parcalar = []
+    for p in re.split(r"\s+—\s+", baslik or ""):
+        p = re.sub(r"^[\s\-–—•:]*(?:\d{1,2}(?:[.)-]\d{0,2})*[.)-]?\s*|[A-HIVX]{1,4}[.)]\s+)?", "", p).strip(" .:;-–—")
+        if len(p) >= 6 and p[:1].isupper() and len(p.split()) <= 9 and katla(p) not in ("not", "uyari", "dikkat"):
+            parcalar.append(p)
+    adaylar = [p for p in dict.fromkeys(parcalar) if _GOREV_BASLIGI.search(p) and len(p) <= 80]
+    return max(adaylar, key=len) if adaylar else ""
+
+
 def kullanim_sorusu_mu(soru: str) -> tuple[Sistem | None, bool]:
     """Soru bir sistemin kullanımıyla mı ilgili? (sistem, kullanım kalıbı var mı)."""
     bulunan = sistem_bul(soru, en_az_puan=1.75)
@@ -78,16 +93,15 @@ class SistemRehberi:
         sonuc, goruldu = [], set()
         for k in self.kilavuzlar(sistem_kimlik):
             for p in self.bolumler(k["kimlik"]):
-                b = (p.baslik or "").strip()
-                anahtar = katla(re.sub(r"^[\dIVX.)\s-]+", "", b))
-                if not b or len(b) > 80 or anahtar in goruldu or not _GOREV_BASLIGI.search(b):
+                b = gorev_basligi(p.baslik)
+                anahtar = katla(b)
+                if not b or anahtar in goruldu:
                     continue
-                if any(x in anahtar for x in ("icindekiler", "giris ", "amac", "kapsam", "tanimlar")) \
-                        and "giris yap" not in anahtar:
+                if any(x in anahtar for x in ("icindekiler", "amac", "kapsam", "tanimlar")):
                     continue
                 goruldu.add(anahtar)
-                sonuc.append({"baslik": re.sub(r"^[\dIVX]+(?:\.\d+)*[.)]?\s+", "", b), "belge": k["kimlik"],
-                              "madde_id": p.madde_id, "sayfa": p.madde_no, "kaynak": k["baslik"]})
+                sonuc.append({"baslik": b, "belge": k["kimlik"], "madde_id": p.madde_id, "sayfa": p.madde_no,
+                              "kaynak": k["baslik"]})
         return sonuc[:n]
 
     def ara(self, soru: str, sistem_kimlik: str | None = None, limit: int = 8) -> list:
@@ -152,9 +166,9 @@ def kilavuz_sorulari(kutuphane, sinir: int = 400) -> list[dict]:
             continue
         for p in kutuphane.belge_maddeleri(k["kimlik"]):
             dayanak = [f"{p.belge_kimlik}/{p.madde_no}"]
-            b = re.sub(r"^[\dIVX]+(?:\.\d+)*[.)]?\s+|^[A-H][.)]\s+", "", (p.baslik or "").strip())
+            b = gorev_basligi(p.baslik)
             adim_sayisi = len(re.findall(r"(?m)^\s*(?:\d{1,2}\s*[-.)]|[•●▪\-–]\s)", p.metin))
-            if 6 <= len(b) <= 80 and _GOREV_BASLIGI.search(b) and (adim_sayisi >= 2 or len(p.metin) >= 200):
+            if b and (adim_sayisi >= 2 or len(p.metin) >= 200):
                 anahtar = (s.kimlik, katla(b))
                 if anahtar not in goruldu:
                     goruldu.add(anahtar)

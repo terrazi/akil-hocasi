@@ -424,3 +424,13 @@ def test_kamu_kopyasi_yayimlayan_dogrulanir_ve_ortak_kalinti_ayiklanir(tmp_path,
     assert len(eimza_k) == 2
     for k in eimza_k:                                     # iki sayfada da olan "Dikkat" kutusu atıldı
         assert all(p.baslik != "Dikkat" for p in kutuphane.belge_maddeleri(k["kimlik"]))
+
+
+def test_gorev_basligi_temizligi():
+    from akil_hocasi.rehber import gorev_basligi
+    assert gorev_basligi("C. Ödeme Emri Belgesi Oluşturma") == "Ödeme Emri Belgesi Oluşturma"
+    assert gorev_basligi("5)DMO Katalog Alımı Kapsamında Kredi Mahsup İşlemleri").startswith("DMO Katalog")
+    assert gorev_basligi("E-İmza İşlemleri — E-İmza İşlemleri") == "E-İmza İşlemleri"
+    assert gorev_basligi("Kurum İçi Gidecek Evrak Yaz — NOT") == "Kurum İçi Gidecek Evrak Yaz"
+    assert gorev_basligi("gün içinde de düzenlenmemesi veyahut HİTAP özlük bilgisinin girilmesi") == ""
+    assert gorev_basligi("Ocak 2026 maaş dönemine ait maaş hesaplaması eski katsayı üzerinden hesaplanan") == ""
