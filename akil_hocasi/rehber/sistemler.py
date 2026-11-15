@@ -34,6 +34,7 @@ class Sistem:
     alanlar: tuple[str, ...] = field(default=())  # sistemin kendi alan adları (adres çubuğu tanıma)
     anilis: str = ""                    # cümle içinde anılışı ("MYS ekranında"); boşsa kısa ad
     dosya_tohumlari: tuple[str, ...] = ()   # bilinen kılavuz dosyaları (resmî site ya da kamu kurumu kopyası)
+    guncel_yil: int = 0                 # >0: kılavuzlar yıla bağlıdır (KPSS); bu kadar yıldan eskisi alınmaz
 
     @property
     def ad_cumle(self) -> str:
@@ -204,6 +205,7 @@ SISTEMLER: tuple[Sistem, ...] = (
         yayimlayan=("Ölçme, Seçme ve Yerleştirme Merkezi", "ÖSYM"),
         alanlar=("ais.osym.gov.tr", "sonuc.osym.gov.tr", "osym.gov.tr"),
         anilis="ÖSYM sistemi",
+        guncel_yil=1,
     ),
     Sistem(
         "EIMZA", "Elektronik imza (Kamu SM nitelikli elektronik sertifika)", "e-İmza", "Kamu Sertifikasyon Merkezi",

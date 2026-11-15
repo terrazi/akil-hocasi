@@ -60,7 +60,8 @@ _GENEL_BAGLANTI = re.compile(r"^(?:buradan|burada|tıkla|tikla|indir|ekte|detay|
 _TARIH_ON = re.compile(r"^\s*\d{1,2}\s+[A-ZÇĞİÖŞÜa-zçğıöşü]+\s+\d{1,2}\s+[A-ZÇĞİÖŞÜa-zçğıöşü]+\s+\d{4}\s+"
                        r"[A-ZÇĞİÖŞÜa-zçğıöşü]+\s+")
 _DUYURU = re.compile(r"\b(ilan[ıi]?|alım ilanı|duyurusu|çağrı(?:sı)?|genelge(?:si)?|sonuç(?:ları)?|takvim(?:i)?|"
-                     r"haber|tebrik|toplantı)\b", re.IGNORECASE)
+                     r"haber|tebrik|toplantı|biyografi|başkan yardımcısı|telefon rehberi|iletişim bilgileri)\b",
+                     re.IGNORECASE)
 _ARAYUZ_EYLEMI = re.compile(r"(tıkla|seçil|seçin|giril|girin|basıl|basın|buton|düğme|menü|ekran|sekme|"
                             r"alanı|alanın|alanına|giriş yap|kaydet|listele|sorgula|onayla|imzala|yükle)", re.IGNORECASE)
 
@@ -378,9 +379,14 @@ class KilavuzToplayici:
         if _DUYURU.search(baslik) and not kilavuz_adi:
             return False
         arayuz_adimi = sum(1 for b in belge.bolumler for a in b.adimlar if _ARAYUZ_EYLEMI.search(a))
+        if re.search(r"telefon rehberi|biyografi", k):
+            return False
+        if belge.tur == "html":                        # web sayfası: ekran adımı ya da menü yolu şart
+            guclu = arayuz_adimi >= 3 or o["yol"] >= 1
+            if len(belge.metin) < 400 and not guclu:
+                return False                           # bağlantı listesi / duyuru sayfası
+            return guclu or (kilavuz_adi and arayuz_adimi >= 1)
         guclu = arayuz_adimi >= 3 or o["yol"] >= 1 or o["etiket"] >= 3
-        if belge.tur == "html" and len(belge.metin) < 400 and not guclu:
-            return False                               # bağlantı listesi / duyuru sayfası
         return guclu or (kilavuz_adi and bool(arayuz_adimi or o["etiket"] or o["adim"] >= 2))
 
     def isle(self, aday: KilavuzAdayi, rapor: ToplamaRaporu) -> dict | None:
@@ -418,6 +424,11 @@ class KilavuzToplayici:
                 return None
             self._islenen_ozet.add(ozet)
         belge.baslik = _baslik_sec(aday.baslik, belge)
+        if s is not None and s.guncel_yil:
+            yil = _surum_anahtari(belge.baslik, aday.url)[1]
+            if yil and yil < datetime.now().year - s.guncel_yil:
+                rapor.say(aday.sistem, "eski_surum_atlandi")
+                return None
         kayit = {"url": aday.url, "sistem": aday.sistem, "baslik": belge.baslik, **belge.ozet()}
         if belge.taranmis:
             kayit["sonuc"] = "taranmis"

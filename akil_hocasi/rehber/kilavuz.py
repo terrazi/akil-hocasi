@@ -173,12 +173,7 @@ def html_sayfalari(veri: bytes | str) -> list[Sayfa]:
     sablon = re.compile(r"(?:^|[-_ ])(?:nav|navbar|menu|menü|header|footer|sidebar|breadcrumb|modal|popup|cookie|"
                         r"social|share|paylas|slider|banner|duyuru-bandi|top-bar|topbar|overlay|lightbox|dialog|"
                         r"fancybox|announcement|notice)(?:$|[-_ ])", re.IGNORECASE)
-    for el in corba.find_all(True):                     # gizli öğeler (açılır pencereler)
-        if el.attrs is None:
-            continue
-        stil = str(el.get("style") or "").replace(" ", "").lower()
-        if "display:none" in stil or el.has_attr("hidden") or str(el.get("aria-hidden")) == "true":
-            el.decompose()
+
     for el in corba.find_all(True):
         if el.attrs is None:
             continue
@@ -524,6 +519,12 @@ def _sayfalara_bol(b: KilavuzBolumu) -> list[KilavuzBolumu]:
 def _baslik_bul(sayfalar: list[Sayfa], varsayilan: str) -> str:
     if not sayfalar or not sayfalar[0].satirlar:
         return varsayilan
+    for s in sayfalar[:2]:                             # "… Uygulama Kılavuzu" satırı en iyi başlıktır
+        for x in s.satirlar[:30]:
+            k = katla(x.metin)
+            if ("kilavuz" in k or "klavuz" in k) and 10 <= len(x.metin) <= 120 and not _ICINDEKILER_SATIRI.search(x.metin) \
+                    and not k.startswith(("bu kilavuz", "kilavuzda", "kilavuzun")):
+                return bosluk_normalle(x.metin)
     ilk = [x for x in sayfalar[0].satirlar[:25] if len(x.metin) >= 4]
     if not ilk:
         return varsayilan
