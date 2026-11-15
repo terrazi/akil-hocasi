@@ -402,13 +402,19 @@ class Damitici:
     def soru_havuzu(self, ek_sorular: list[dict] | None = None) -> list[dict]:
         """İşlenmemiş sorular: programın ürettiği doğrulanmış çalışma soruları + (varsa) kullanıcı paketindeki
         gerçek sorular ve altın set."""
-        havuz = []
+        sentetik, ek = [], []
         for r in self.s.kutuphane.db.execute(
                 "SELECT id, soru, dayanak FROM yz_sentetik WHERE durum='dogrulandi' ORDER BY id").fetchall():
-            havuz.append({"id": f"s{r['id']}", "soru": r["soru"], "dayanak": json.loads(r["dayanak"] or "[]")})
+            sentetik.append({"id": f"s{r['id']}", "soru": r["soru"], "dayanak": json.loads(r["dayanak"] or "[]")})
         for i, e in enumerate(ek_sorular or []):
-            havuz.append({"id": e.get("id") or f"k{i}", "soru": e["soru"], "dayanak": e.get("dayanak", [])})
-        return [h for h in havuz if h["id"] not in self.islenen]
+            ek.append({"id": e.get("id") or f"k{i}", "soru": e["soru"], "dayanak": e.get("dayanak", [])})
+        sentetik = [h for h in sentetik if h["id"] not in self.islenen]
+        ek = [h for h in ek if h["id"] not in self.islenen]
+        # sırayla karıştırılır: süre bitse de hem mevzuat çalışma soruları hem kılavuz/kullanıcı soruları işlenmiş olur
+        havuz = []
+        for i in range(max(len(sentetik), len(ek))):
+            havuz.extend(x[i] for x in (ek, sentetik) if i < len(x))
+        return havuz
 
     # ------------------------------------------------------------------ 2 danışma akışı
     def soru_isle(self, h: dict) -> None:

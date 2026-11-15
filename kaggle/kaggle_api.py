@@ -221,6 +221,12 @@ def _kilavuzlari_derle(arg) -> list[dict]:
         print(f"  {s}: {json.dumps(d, ensure_ascii=False)}")
     for h in rapor.hatalar[:60]:
         print("  HATA", h[:240])
+    from akil_hocasi.rehber import kilavuz_sorulari
+    ks = kilavuz_sorulari(k)
+    print(f"KILAVUZ SORULARI: {len(ks)} ({sum(1 for x in ks if x['tur'] == 'kilavuz_islem')} işlem, "
+          f"{sum(1 for x in ks if x['tur'] == 'kilavuz_hata')} hata iletisi)")
+    for x in ks[:: max(1, len(ks) // 12)][:12]:
+        print("  ·", x["soru"][:150])
     belgeler = []
     for b in k.belgeleri_listele("KLV:"):
         bolumler = [{"no": p.madde_no, "baslik": p.baslik, "metin": p.metin} for p in k.belge_maddeleri(b["kimlik"])]
