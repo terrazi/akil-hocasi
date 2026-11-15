@@ -172,6 +172,22 @@ def calistir(rapor_yolu: str) -> int:
     adim("Hızlı Yakala penceresi", yakala)
 
     adim("Belge Deposu sayfası", lambda: pencere.depo_sayfa.yenile() or "yenilendi")
+
+    def sistem_rehberi():
+        html = ("<html><head><title>Öz test HYS kılavuzu</title></head><body><h1>Harcama Yönetim Sistemi</h1>"
+                "<h2>Ödeme Emri Belgesi Oluşturma</h2><p>Harcama Yönetimi > Ödeme Emri Belgesi > Yeni menüsü açılır.</p>"
+                "<ol><li>“Ödeme Türü” alanından tür seçilir.</li><li>Kaydet butonuna basılır.</li>"
+                "<li>E-İmzaya Gönder düğmesine tıklanır.</li></ol></body></html>").encode()
+        sonuc = s.rehber.toplayici().dosya_ekle(html, "oz_test_hys.html", "MYS")
+        r = pencere.rehber_sayfa
+        r.yenile()
+        r.ekran_metni_isle("mysv2.hmb.gov.tr\nHarcama Yönetim Sistemi\nÖdeme Emri Belgesi\nKaydet")
+        app.processEvents()
+        if r.analiz is None or r.analiz.sistem is None or r.analiz.sistem.kimlik != "MYS":
+            raise RuntimeError("ekran tanınamadı")
+        return (f"kılavuz: {sonuc['sonuc']} ({sonuc.get('bolum')} bölüm) | ekran: {r.analiz.ozet()} | "
+                f"{len(r.analiz.bolumler)} kılavuz bölümü | soru: {r.ekran_soru.text()[:60]}")
+    adim("Sistem Rehberi (kılavuz, ekran tanıma)", sistem_rehberi)
     adim("Tesseract yolu", lambda: __import__("akil_hocasi.ocr.motorlar", fromlist=["x"]).paketteki_tesseract() or "pakette yok")
 
     def gozlemci():
