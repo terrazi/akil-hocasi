@@ -33,6 +33,7 @@ class Sistem:
     yayimlayan: tuple[str, ...] = ()    # kılavuzu yayımlayan kurumun belgede geçen adı
     alanlar: tuple[str, ...] = field(default=())  # sistemin kendi alan adları (adres çubuğu tanıma)
     anilis: str = ""                    # cümle içinde anılışı ("MYS ekranında"); boşsa kısa ad
+    dosya_tohumlari: tuple[str, ...] = ()   # bilinen kılavuz dosyaları (resmî site ya da kamu kurumu kopyası)
 
     @property
     def ad_cumle(self) -> str:
@@ -68,6 +69,16 @@ SISTEMLER: tuple[Sistem, ...] = (
         yayimlayan=("Muhasebat Genel Müdürlüğü", "Hazine ve Maliye Bakanlığı"),
         alanlar=("mysv2.hmb.gov.tr", "mys.muhasebat.gov.tr"),
         anilis="MYS",
+        dosya_tohumlari=(
+            "https://strateji.subu.edu.tr/sites/strateji.subu.edu.tr/files/2024-04/Emanet%20MYSV2.pdf",
+            "https://selcuk.edu.tr/contents/strateji_gelistirme/slider/33382/Harcama%20Y%C3%B6netim%20Sistemi%20Taahh%C3%BCt%20%C4%B0%C5%9Flemleri%20Uygulama%20K%C4%B1lavuzu_638737383815119000.pdf",
+            "https://webupload.gazi.edu.tr/upload/27/2025/2/25/249ce326-22b0-44e7-9e25-ddd5cf7728bd-kamu-avans-kart-islemleri-uygulama-kilavuzu.pdf",
+            "https://strateji.erciyes.edu.tr/EditorUpload/Files/7a295a27-e7de-4c89-a6ab-f509bd0bce2b.pdf",
+            "https://strateji.erciyes.edu.tr/EditorUpload/Files/yolluk-bildirim-formunun-e-belge-olarak-olusturulmasi.pdf",
+            "https://sgdb.sbu.edu.tr/uploads/63a61b0d-2177-74b6-6ea2-3a0814c8ac90/hysdmo_katalog_almlar_klavuzu.pdf",
+            "https://bhi.nku.edu.tr/basinyonetim/resim/images/editorresimleri/4053/files/E-fatura%20uygulama%20klavuzu.pdf",
+            "https://sgdb.ardahan.edu.tr/uploads/u32/f307/5a84cae3610c45d1945d95beb2b022ec.pdf",
+        ),
     ),
     Sistem(
         "KBS", "Kamu Harcama ve Muhasebe Bilişim Sistemi (maaş, ek ders, sosyal hak, fazla çalışma)", "KBS",
@@ -80,6 +91,15 @@ SISTEMLER: tuple[Sistem, ...] = (
                     "Bireysel Emeklilik", "Bordro", "KPHYS", "Saymanlık İşlemleri", "Personel Listesi Yenile"),
         yayimlayan=("Muhasebat Genel Müdürlüğü", "Hazine ve Maliye Bakanlığı"),
         alanlar=("kbs.gov.tr", "kbs.muhasebat.gov.tr"),
+        dosya_tohumlari=(
+            "https://ms.hmb.gov.tr/uploads/sites/3/2026/01/2026-Yeni-Yil-Islemleri-Uygulama-Kilavuzu-bf4b1bdbe3281e96.pdf",
+            "https://ms.hmb.gov.tr/uploads/sites/3/2022/06/Sosyal-Hak-ve-Yardim-Odemeleri-Klavuzu-Version-6.pdf",
+            "https://batman.edu.tr/images/files/%C4%B0dari%20Birimler/Strateji_DB/Bilgi%20Bankas%C4%B1/K%C4%B1lavuzlar/Fiili-Hizmet-Uygulama-Kilavuzu_2022.pdf",
+            "https://muhasebekesinhesap.samsun.edu.tr/wp-content/uploads/sites/100/2021/01/KBS-Fazla-Calisma-Uygulama-Kilavuzu-Verson-1.pdf",
+            "https://muhasebekesinhesap.samsun.edu.tr/wp-content/uploads/sites/100/2021/01/KBS_Matrah-Birlestirme-Kilavuzu-V2.pdf",
+            "https://sgdb.isparta.edu.tr/assets/uploads/sites/95/files/kamu-personeli-aile-bildirim-sistemi-kapbis-uygulama-kilavuzu-version-1-24092021.pdf",
+            "https://atauni.edu.tr/yuklemeler/136c619d2ed18dfa61091f58c39b78cb.pdf",
+        ),
     ),
     Sistem(
         "TKYS", "Taşınır Kayıt ve Yönetim Sistemi (KBS)", "Taşınır (TKYS)",
@@ -92,6 +112,10 @@ SISTEMLER: tuple[Sistem, ...] = (
         yayimlayan=("Muhasebat Genel Müdürlüğü", "Hazine ve Maliye Bakanlığı"),
         alanlar=("kbs.gov.tr/TMYS",),
         anilis="KBS Taşınır (TKYS)",
+        dosya_tohumlari=(
+            "https://sgdb.ankara.edu.tr/wp-content/uploads/sites/172/2017/02/TKYS-Kilavuz.pdf",
+            "https://www.tkgm.gov.tr/sites/default/files/2020-10/tasinir_islemlerinin_yeni_muhasebe_sistemine_gonderimi.pdf",
+        ),
     ),
     Sistem(
         "HITAP", "Hizmet Takip Programı (SGK, 4/c)", "HİTAP", "Sosyal Güvenlik Kurumu",
@@ -117,6 +141,10 @@ SISTEMLER: tuple[Sistem, ...] = (
         yayimlayan=("Sosyal Güvenlik Kurumu",),
         alanlar=("e.sgk.gov.tr", "uyg.sgk.gov.tr", "ebildirge.sgk.gov.tr"),
         anilis="SGK işveren uygulamaları",
+        dosya_tohumlari=(
+            "https://ktun.edu.tr/Dosyalar/1089/files/Devlet-Memurlari-Is-Kazasi-Bildirim-Klavuzu.pdf",
+            "https://sgdb.isparta.edu.tr/assets/uploads/sites/95/files/4c-kullanici-degisikligi-yardim-klavuzu-23062022.pdf",
+        ),
     ),
     Sistem(
         "YOKSIS", "Yükseköğretim Bilgi Sistemi (YÖKSİS)", "YÖKSİS", "Yükseköğretim Kurulu",
@@ -127,6 +155,10 @@ SISTEMLER: tuple[Sistem, ...] = (
                     "Akademik Personel", "DOSAİ", "YÖK Akademik", "Yıllık Plan", "Kadro İşlemleri"),
         yayimlayan=("Yükseköğretim Kurulu",),
         alanlar=("yoksis.yok.gov.tr", "yoksis.gov.tr"),
+        dosya_tohumlari=(
+            "https://ibs.gaziantep.edu.tr/ae_files/orcid12939.pdf",
+            "https://personeldb.ege.edu.tr/files/personeldb/icerik/DOSAI_basvuru_kilavuzu.pdf",
+        ),
     ),
     Sistem(
         "PBS", "YÖK Personel Bilgi Sistemi (idari personel, İGPS, becayiş)", "YÖK PBS", "Yükseköğretim Kurulu",
@@ -152,11 +184,14 @@ SISTEMLER: tuple[Sistem, ...] = (
         "KARIYER", "Kariyer Kapısı – Kamu İşe Alım", "Kariyer Kapısı", "Cumhurbaşkanlığı İnsan Kaynakları Ofisi",
         adres="https://isealimkariyerkapisi.cbiko.gov.tr",
         kullananlar=("Personel Daire Başkanlığı (sözleşmeli personel ve işe alım ilanları)",),
-        tohumlar=("https://www.cbiko.gov.tr/",),
+        tohumlar=("https://www.cbiko.gov.tr/", "https://cbiko.gov.tr/"),
         anahtarlar=("Kariyer Kapısı", "Kamu İşe Alım", "İlan Yönetimi", "Başvurularım", "Başvuru Alındı",
                     "Aday Bilgileri", "cbiko"),
-        yayimlayan=("Cumhurbaşkanlığı İnsan Kaynakları Ofisi",),
+        yayimlayan=("Cumhurbaşkanlığı İnsan Kaynakları Ofisi", "Kariyer Kapısı"),
         alanlar=("isealimkariyerkapisi.cbiko.gov.tr", "kariyerkapisi.cbiko.gov.tr"),
+        dosya_tohumlari=(
+            "https://www.csgb.gov.tr/Media/j4cpteio/3-ek3_kariyer_kapisi_aday_kullanim_k%C4%B1lavuzu.pdf",
+        ),
     ),
     Sistem(
         "OSYM", "ÖSYM sistemleri (KPSS: Aday İşlemleri, Sonuç Açıklama, Sonuç Belgesi Doğrulama)", "ÖSYM / KPSS",
@@ -180,11 +215,18 @@ SISTEMLER: tuple[Sistem, ...] = (
         yayimlayan=("Kamu Sertifikasyon Merkezi", "TÜBİTAK BİLGEM"),
         alanlar=("onlineislemler.kamusm.gov.tr", "kamusm.bilgem.tubitak.gov.tr"),
         anilis="e-İmza uygulaması",
+        dosya_tohumlari=(
+            "https://e-belgeyardim.tarimorman.gov.tr/BelgelerArsiv/eimzahata.pdf",
+            "https://webadmin.selcuk.edu.tr/uploads//contents/bilgi_islem/duyuruG/3371/E-%C4%B0mza%20Cannot%20Encode%20%20Hatas%C4%B1%20%C3%87%C3%B6z%C3%BCm%C3%BC_v02_639082342714437216.pdf",
+        ),
     ),
     Sistem(
         "DETSIS", "Devlet Teşkilatı Merkezi Kayıt Sistemi (DETSİS)", "DETSİS", "Cumhurbaşkanlığı",
         kullananlar=("Personel Daire Başkanlığı", "Strateji Geliştirme"),
         anahtarlar=("DETSİS", "Devlet Teşkilatı Merkezi Kayıt Sistemi", "DETSİS Numarası", "Personel Ekle"),
+        dosya_tohumlari=(
+            "https://www.csgb.gov.tr/Media/wdfnmuas/657-4-a-kapsam%C4%B1-d%C4%B1%C5%9F%C4%B1ndaki-kamu-personeli-bilgisinin-detsis-numaras%C4%B1na-eklenmesi.pdf",
+        ),
     ),
     Sistem(
         "KEP", "Kayıtlı Elektronik Posta (KEP)", "KEP", "KEP hizmet sağlayıcısı",

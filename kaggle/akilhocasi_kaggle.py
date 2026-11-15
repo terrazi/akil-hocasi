@@ -870,11 +870,17 @@ def sina(veri_k: Path, bin_k: Path, temel: Path, yeni: Path, sinir: int, bitis: 
             for satir in (veri_k / ad).read_text("utf-8").splitlines():
                 try:
                     x = json.loads(satir)
-                    sorular.append({"soru": x["soru"], "beklenen_dayanak": x.get("beklenen_dayanak", []),
-                                    "tur": tur or x.get("tur", "gercek")})
+                    t = tur or x.get("tur", "gercek")
+                    if str(x.get("id", "")).startswith("klv-"):
+                        t = "kilavuz"                  # sistem kullanımı (kılavuz başlığı/iletisinden)
+                    sorular.append({"soru": x["soru"], "beklenen_dayanak": x.get("beklenen_dayanak", []), "tur": t})
                 except (ValueError, KeyError):
                     continue
-    sorular = sorular[:sinir]
+    # sıra: gerçek → kılavuz (en çok dörtte bir) → sentetik; süre kısa kalsa da her türden soru sınanır
+    gercek = [s for s in sorular if s["tur"] not in ("sentetik", "kilavuz")]
+    kilavuz = [s for s in sorular if s["tur"] == "kilavuz"][: max(5, sinir // 4)]
+    sentetik = [s for s in sorular if s["tur"] == "sentetik"]
+    sorular = (gercek + kilavuz + sentetik)[:sinir]
     gercek_n = sum(1 for s in sorular if s["tur"] != "sentetik")
     bildir(f"Sınav: {len(sorular)} görülmemiş soru ({gercek_n} gerçek/zorlaştırılmış), iki model aynı anda")
     k = Kutuphane(veri_k / "kutuphane.db")

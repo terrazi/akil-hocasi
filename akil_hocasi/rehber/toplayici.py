@@ -274,6 +274,7 @@ class KilavuzToplayici:
         kuyruk = [(t, 0) for t in s.tohumlar]
         gorulen: set[str] = set()
         wp_denenen: set[str] = set()
+        tohum_hostlari = {urlparse(x).hostname for x in s.tohumlar}
         sayfa = 0
         while kuyruk and sayfa < self.sayfa_siniri and not self.durdur.is_set():
             url, derinlik = kuyruk.pop(0)
@@ -322,8 +323,11 @@ class KilavuzToplayici:
                     continue
                 if puan >= 3 or (puan >= 2 and tohum):
                     kuyruk.append((hedef, derinlik + 1))
-                    if puan >= 5 and adres_izinli(hedef, s):   # kılavuz/SSS başlıklı yardım sayfası
-                        adaylar.setdefault(hedef, KilavuzAdayi(hedef, metin, s.kimlik, url, puan - 1, False))
+                    ozel_site = s.kimlik != "TOGU" and urlparse(hedef).hostname in tohum_hostlari
+                    if (puan >= 5 or (puan >= 3 and ozel_site)) and adres_izinli(hedef, s):   # yardım/SSS sayfası
+                        sorgusuz = urlparse(hedef)._replace(query="").geturl()
+                        if not any(urlparse(a)._replace(query="").geturl() == sorgusuz for a in adaylar):
+                            adaylar[hedef] = KilavuzAdayi(hedef, metin, s.kimlik, url, puan - 1, False)
         # aynı kılavuzun yıllara göre sürümlerinden (KPSS-2015/1 ... KPSS-2026/1) yalnız en yenisi
         en_yeni: dict[str, KilavuzAdayi] = {}
         eski_surum = 0
@@ -379,6 +383,11 @@ class KilavuzToplayici:
         return guclu or (kilavuz_adi and bool(arayuz_adimi or o["etiket"] or o["adim"] >= 2))
 
     def isle(self, aday: KilavuzAdayi, rapor: ToplamaRaporu) -> dict | None:
+        """Tek adayı indirir, ayrıştırır, doğrular ve kaydeder."""
+        hazir = self._hazirla(aday, rapor)
+        return self._kaydet(hazir, rapor) if hazir else None
+
+    def _hazirla(self, aday: KilavuzAdayi, rapor: ToplamaRaporu) -> dict | None:
         s = sistem(aday.sistem)
         yanit = self._getir(aday.url, rapor)
         if yanit.degismedi:
@@ -401,13 +410,19 @@ class KilavuzToplayici:
             return None
         if belge is None:
             return None
+        if belge.tur == "html":                        # aynı sayfanın sorgu parametreli kopyaları
+            ozet = hashlib.sha256(katla(belge.metin).encode()).hexdigest()
+            if ozet in self._islenen_ozet:
+                rapor.say(aday.sistem, "ayni_icerik")
+                return None
+            self._islenen_ozet.add(ozet)
         belge.baslik = _baslik_sec(aday.baslik, belge)
         kayit = {"url": aday.url, "sistem": aday.sistem, "baslik": belge.baslik, **belge.ozet()}
         if belge.taranmis:
             kayit["sonuc"] = "taranmis"
             self._depola(yanit, aday, belge, s)
             rapor.belgeler.append(kayit)
-            return kayit
+            return None
         if not self._kilavuz_mu(belge, aday.baslik):
             rapor.say(aday.sistem, "kilavuz_degil")
             return None
@@ -415,19 +430,58 @@ class KilavuzToplayici:
         if hedef is None:
             rapor.say(aday.sistem, "sistemle_ilgisiz")
             return None
+        kaynak_turu = "Kullanım kılavuzu"
+        if beyaz_liste.kamu_kopyasi_mi(aday.url):
+            # beyaz liste dışındaki kamu sitesindeki kopya: yayımlayan kurum belgede doğrulanmalı ya da belge o
+            # sistemi açıkça anlatan bir kamu kurumu yardım belgesi olmalı
+            on = katla(belge.yayimlayan + " " + belge.baslik + " " + belge.metin[:4000])
+            yayimlayan_tutar = any(katla(y) in on for y in hedef.yayimlayan)
+            guclu = sistem_bul(belge.baslik + "\n" + belge.metin[:6000], en_az_puan=6.0)
+            if yayimlayan_tutar:
+                kaynak_turu = "Kullanım kılavuzu (kamu kurumu sitesindeki kopya)"
+            elif guclu and guclu[0][0].kimlik == hedef.kimlik:
+                kaynak_turu = "Kamu kurumu yardım belgesi"
+            else:
+                rapor.say(aday.sistem, "yayimlayan_dogrulanamadi")
+                return None
         kayit["sistem"] = hedef.kimlik
+        return {"aday": aday, "yanit": yanit, "belge": belge, "hedef": hedef, "kayit": kayit,
+                "kaynak_turu": kaynak_turu}
+
+    def _kaydet(self, h: dict, rapor: ToplamaRaporu) -> dict:
+        aday, yanit, belge, hedef, kayit = h["aday"], h["yanit"], h["belge"], h["hedef"], h["kayit"]
         dosya_yolu = self._depola(yanit, aday, belge, hedef)
         if self.kutuphane is not None:
             kayit["sonuc"] = self.kutuphane.belge_kaydet(
                 tur="kilavuz", kimlik=kilavuz_kimligi(hedef.kimlik, aday.url),
                 baslik=f"{hedef.kisa} — {belge.baslik}"[:220], metin=belge.metin, sha256=yanit.sha256,
-                kaynak_url=aday.url, kaynak_turu="Kullanım kılavuzu", birim=hedef.kimlik, rv=belge.surum,
+                kaynak_url=aday.url, kaynak_turu=h["kaynak_turu"], birim=hedef.kimlik, rv=belge.surum,
                 yayin_tarihi=belge.tarih, dosya_yolu=dosya_yolu, maddeler=belge.maddeler())
         else:
             kayit["sonuc"] = "yeni"
         rapor.say(hedef.kimlik, kayit["sonuc"])
         rapor.belgeler.append(kayit)
         return kayit
+
+    @staticmethod
+    def _ortak_kalintilari_ayikla(hazirlar: list[dict]) -> None:
+        """Aynı siteden gelen birden çok yardım sayfasında tekrar eden bölümler (açılır duyuru, site menüsü,
+        kenar kutusu) içerik değildir; her sayfadan çıkarılır."""
+        from collections import Counter as _Sayac
+
+        def iz(b) -> str:
+            return katla(b.baslik + " " + b.metin)[:240]
+
+        for host in {urlparse(h["aday"].url).hostname for h in hazirlar}:
+            grup = [h for h in hazirlar if urlparse(h["aday"].url).hostname == host]
+            if len(grup) < 2:
+                continue
+            sayac = _Sayac(x for h in grup for x in {iz(b) for b in h["belge"].bolumler})
+            for h in grup:
+                kalan = [b for b in h["belge"].bolumler if sayac[iz(b)] < 2]
+                if kalan:
+                    h["belge"].bolumler = kalan
+                    h["kayit"].update(h["belge"].ozet())
 
     def _baska_adreste_var(self, sha: str, url: str) -> bool:
         if self.kutuphane is None or not sha:
@@ -454,7 +508,8 @@ class KilavuzToplayici:
         rapor = ToplamaRaporu()
         self._islenen_ozet = set()
         bildir = ilerleme or (lambda m: None)
-        secili = [s for s in SISTEMLER if (not sistemler or s.kimlik in sistemler) and s.tohumlar]
+        secili = [s for s in SISTEMLER if (not sistemler or s.kimlik in sistemler)
+                  and (s.tohumlar or s.dosya_tohumlari)]
         islenen: set[str] = set()
         for s in secili:
             if self.durdur.is_set():
@@ -465,15 +520,29 @@ class KilavuzToplayici:
             except Exception as e:  # noqa: BLE001 - bir sistem diğerlerini durdurmaz
                 rapor.hatalar.append(f"{s.kimlik} keşif: {e}")
                 continue
-            for aday in adaylar[: self.belge_siniri]:
+            dogrudan = [KilavuzAdayi(u, "", s.kimlik, "", 10.0, True) for u in s.dosya_tohumlari]
+            sayfalar: list[dict] = []
+            for aday in dogrudan + adaylar[: self.belge_siniri]:
                 if self.durdur.is_set() or aday.url in islenen:
                     continue
                 islenen.add(aday.url)
-                bildir(f"{s.kisa}: {aday.baslik[:60] or aday.url.rsplit('/', 1)[-1]}")
+                bildir(f"{s.kisa}: {aday.baslik[:60] or unquote(aday.url.rsplit('/', 1)[-1])[:60]}")
                 try:
-                    self.isle(aday, rapor)
+                    h = self._hazirla(aday, rapor)
+                    if h is None:
+                        continue
+                    if h["belge"].tur == "html":
+                        sayfalar.append(h)             # site kalıntıları ayıklandıktan sonra kaydedilir
+                    else:
+                        self._kaydet(h, rapor)
                 except Exception as e:  # noqa: BLE001
                     rapor.hatalar.append(f"{aday.url}: {e}")
+            self._ortak_kalintilari_ayikla(sayfalar)
+            for h in sayfalar:
+                try:
+                    self._kaydet(h, rapor)
+                except Exception as e:  # noqa: BLE001
+                    rapor.hatalar.append(f"{h['aday'].url}: {e}")
         rapor.bitis = datetime.now().isoformat(timespec="seconds")
         if self.kutuphane is not None:
             self.kutuphane.zamanlayici_yaz("kilavuz", rapor.bitis)

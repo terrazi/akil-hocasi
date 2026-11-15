@@ -171,7 +171,14 @@ def html_sayfalari(veri: bytes | str) -> list[Sayfa]:
                          "button", "select"]):
         etiket.decompose()
     sablon = re.compile(r"(?:^|[-_ ])(?:nav|navbar|menu|menü|header|footer|sidebar|breadcrumb|modal|popup|cookie|"
-                        r"social|share|paylas|slider|banner|duyuru-bandi|top-bar|topbar)(?:$|[-_ ])", re.IGNORECASE)
+                        r"social|share|paylas|slider|banner|duyuru-bandi|top-bar|topbar|overlay|lightbox|dialog|"
+                        r"fancybox|announcement|notice)(?:$|[-_ ])", re.IGNORECASE)
+    for el in corba.find_all(True):                     # gizli öğeler (açılır pencereler)
+        if el.attrs is None:
+            continue
+        stil = str(el.get("style") or "").replace(" ", "").lower()
+        if "display:none" in stil or el.has_attr("hidden") or str(el.get("aria-hidden")) == "true":
+            el.decompose()
     for el in corba.find_all(True):
         if el.attrs is None:
             continue
@@ -524,7 +531,12 @@ def _baslik_bul(sayfalar: list[Sayfa], varsayilan: str) -> str:
     if not en_buyuk:
         return varsayilan
     buyukler = [x.metin for x in ilk if x.boyut >= en_buyuk * 0.85][:4]
-    baslik = bosluk_normalle(" ".join(buyukler))
+    baslik = ""
+    for satir in buyukler:                             # başlık satırları, cümleye taşmadan (en çok ~100 karakter)
+        aday = bosluk_normalle(f"{baslik} {satir}")
+        if baslik and len(aday) > 100:
+            break
+        baslik = aday
     return baslik[:160] if len(baslik) >= 6 else varsayilan
 
 

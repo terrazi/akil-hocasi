@@ -86,6 +86,8 @@ def test_katalog_adresleri_ve_tohumlar_guvenli():
         for t in s.tohumlar:                       # tohumlar yalnız resmî (beyaz liste) alanlarda
             assert beyaz_liste.kilavuz_izinli_mi(t), t
             assert adres_izinli(t, s, tohum=True), t
+        for d in s.dosya_tohumlari:                # bilinen dosyalar: resmî site ya da kamu kurumu kopyası
+            assert d.lower().endswith((".pdf", ".docx", ".doc")) and adres_izinli(d, s), d
 
 
 def test_sistem_bul_ve_kullanim_sorusu():
@@ -359,3 +361,66 @@ def test_html_site_kalintilari_atilir():
     tum = b.metin
     assert "KAPAT" not in tum and "Hakkımızda" not in tum and "Ürünler" not in tum
     assert "PIN Kilidini Çözme" in tum and "Giriş" in b.bolumler[0].etiketler
+
+
+def _docx(*paragraflar) -> bytes:
+    docx = pytest.importorskip("docx")
+    belge = docx.Document()
+    for stil, metin in paragraflar:
+        if stil == "b":
+            belge.add_heading(metin, level=1)
+        else:
+            belge.add_paragraph(metin)
+    tampon = io.BytesIO()
+    belge.save(tampon)
+    return tampon.getvalue()
+
+
+def test_kamu_kopyasi_yayimlayan_dogrulanir_ve_ortak_kalinti_ayiklanir(tmp_path, kutuphane, monkeypatch):
+    from akil_hocasi.crawler.depo import BelgeDeposu
+    from akil_hocasi.crawler.indirici import Indirici
+    from akil_hocasi.rehber import sistemler as sm
+
+    assert beyaz_liste.kamu_kopyasi_mi("https://strateji.ornek.edu.tr/a/hys.pdf")
+    assert not beyaz_liste.kamu_kopyasi_mi("https://strateji.ornek.edu.tr/a/sayfa.html")
+    assert not beyaz_liste.kamu_kopyasi_mi("https://ornek.com.tr/hys.pdf")
+    dogru = _docx(("p", "T.C. Hazine ve Maliye Bakanlığı Muhasebat Genel Müdürlüğü"),
+                  ("b", "Emanet İşlemleri Uygulama Kılavuzu"),
+                  ("p", "Harcama Yönetim Sistemi > Emanet İşlemleri > Emanet Görüntüleme menüsü açılır."),
+                  ("p", "1. Sorgula butonuna basılır."), ("p", "2. “İşlem Fişi Oluştur” düğmesine tıklanır."))
+    yabanci = _docx(("b", "Birim Yazılım Notları"), ("p", "1. Raporlar butonuna basılır."),
+                    ("p", "2. Listele düğmesine tıklanır."), ("p", "3. Kaydet butonuna basılır."))
+    sayfa_ortak = "<h2>Dikkat</h2><p>Chrome ile Java eklentisi sorunu yaşayabilirsiniz, Firefox kullanın.</p>"
+    s1 = ("<html><body><h1>PIN Kilit Çözme</h1>" + sayfa_ortak + "<h2>PIN Kilit Çözme Adımları</h2><ol>"
+          "<li>Online İşlemler sayfasında “Giriş” düğmesine basılır.</li><li>Kilit Çözme menüsü seçilir.</li>"
+          "<li>Yeni PIN alanına şifre yazılır.</li></ol></body></html>").encode()
+    s2 = ("<html><body><h1>Sertifika Askıya Alma</h1>" + sayfa_ortak + "<h2>Askıya Alma Adımları</h2><ol>"
+          "<li>Bireysel İşlemler menüsüne tıklanır.</li><li>Askıya Al butonuna basılır.</li>"
+          "<li>Onay ekranında Evet seçilir.</li></ol></body></html>").encode()
+    kok = "https://kamusm.bilgem.tubitak.gov.tr/"
+    liste = (f"<html><body><a href='{kok}yardim/pin.html'>PIN kilit çözme yardım kılavuzu</a>"
+             f"<a href='{kok}yardim/aski.html'>Askıya alma yardım kılavuzu</a></body></html>").encode()
+    oturum = _Oturum({
+        "https://strateji.ornek.edu.tr/emanet.docx": (dogru, "d1", "application/x"),
+        "https://bim.ornek.edu.tr/notlar.docx": (yabanci, "d2", "application/x"),
+        kok: (liste, "l1", "text/html"), kok + "yardim/pin.html": (s1, "s1", "text/html"),
+        kok + "yardim/aski.html": (s2, "s2", "text/html")})
+    mys = sm.sistem("MYS")
+    eimza = sm.sistem("EIMZA")
+    yeni_mys = sm.Sistem(**{**mys.__dict__, "tohumlar": (), "dosya_tohumlari": (
+        "https://strateji.ornek.edu.tr/emanet.docx", "https://bim.ornek.edu.tr/notlar.docx")})
+    yeni_eimza = sm.Sistem(**{**eimza.__dict__, "tohumlar": (kok,), "dosya_tohumlari": ()})
+    katalog = tuple(yeni_mys if s.kimlik == "MYS" else yeni_eimza if s.kimlik == "EIMZA" else s for s in sm.SISTEMLER)
+    from akil_hocasi.rehber import toplayici as tp
+    monkeypatch.setattr(sm, "SISTEMLER", katalog)
+    monkeypatch.setattr(sm, "_SOZLUK", {s.kimlik: s for s in katalog})
+    monkeypatch.setattr(tp, "SISTEMLER", katalog)
+    t = KilavuzToplayici(kutuphane, BelgeDeposu(tmp_path / "depo"), Indirici(0, oturum=oturum))
+    rapor = t.topla(["MYS", "EIMZA"])
+    assert rapor.sistemler["MYS"].get("yayimlayan_dogrulanamadi") == 1
+    mys_k = kutuphane.belgeleri_listele("KLV:MYS:")
+    assert len(mys_k) == 1 and mys_k[0]["kaynak_turu"].startswith("Kullanım kılavuzu (kamu kurumu")
+    eimza_k = kutuphane.belgeleri_listele("KLV:EIMZA:")
+    assert len(eimza_k) == 2
+    for k in eimza_k:                                     # iki sayfada da olan "Dikkat" kutusu atıldı
+        assert all(p.baslik != "Dikkat" for p in kutuphane.belge_maddeleri(k["kimlik"]))

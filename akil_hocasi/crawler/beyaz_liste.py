@@ -64,11 +64,23 @@ def izinli_mi(url: str) -> bool:
     return birincil_mi(url) or ikincil_mi(url)
 
 
+KAMU_UZANTILARI = (".gov.tr", ".edu.tr")
+BELGE_UZANTILARI = (".pdf", ".docx", ".doc")
+
+
+def kamu_kopyasi_mi(url: str) -> bool:
+    """Beyaz liste dışındaki bir kamu kurumu/üniversite sitesinde duran belge dosyası mı (ör. Muhasebat kılavuzunun
+    bir üniversite strateji sitesindeki kopyası)? Yalnız kılavuz için ve yayımlayan kurum belgede doğrulanarak kullanılır."""
+    u = urlparse(url)
+    return (u.scheme in ("https", "http") and alan(url).endswith(KAMU_UZANTILARI)
+            and u.path.lower().endswith(BELGE_UZANTILARI) and not izinli_mi(url))
+
+
 def kilavuz_izinli_mi(url: str) -> bool:
     u = urlparse(url)
     if u.scheme not in ("https", "http"):
         return False
-    return izinli_mi(url) or _eslesir(alan(url), KILAVUZ_EK)
+    return izinli_mi(url) or _eslesir(alan(url), KILAVUZ_EK) or kamu_kopyasi_mi(url)
 
 
 def oneri_ekle(url: str) -> None:
