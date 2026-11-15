@@ -45,6 +45,46 @@ def _kat(url: str) -> str:
     return katla(unquote(url))
 
 
+def kanonik(url: str) -> str:
+    """Aynı belgenin farklı yazılışlarını birleştirir: varsayılan bağlantı noktası ve parça atılır."""
+    url = urldefrag(url)[0]
+    u = urlparse(url)
+    ag = u.netloc
+    if (u.scheme == "https" and ag.endswith(":443")) or (u.scheme == "http" and ag.endswith(":80")):
+        ag = ag.rsplit(":", 1)[0]
+    return u._replace(netloc=ag.lower()).geturl()
+
+
+_GENEL_BAGLANTI = re.compile(r"^(?:buradan|burada|tıkla|tikla|indir|ekte|detay|devam|için tıklayınız|link|pdf|"
+                             r"dosya|belge|tıklayınız)", re.IGNORECASE)
+_TARIH_ON = re.compile(r"^\s*\d{1,2}\s+[A-ZÇĞİÖŞÜa-zçğıöşü]+\s+\d{1,2}\s+[A-ZÇĞİÖŞÜa-zçğıöşü]+\s+\d{4}\s+"
+                       r"[A-ZÇĞİÖŞÜa-zçğıöşü]+\s+")
+_DUYURU = re.compile(r"\b(ilan[ıi]?|alım ilanı|duyurusu|çağrı(?:sı)?|genelge(?:si)?|sonuç(?:ları)?|takvim(?:i)?|"
+                     r"haber|tebrik|toplantı)\b", re.IGNORECASE)
+_ARAYUZ_EYLEMI = re.compile(r"(tıkla|seçil|seçin|giril|girin|basıl|basın|buton|düğme|menü|ekran|sekme|"
+                            r"alanı|alanın|alanına|giriş yap|kaydet|listele|sorgula|onayla|imzala|yükle)", re.IGNORECASE)
+
+
+def _baslik_sec(baglanti: str, belge: KilavuzBelgesi) -> str:
+    """Bağlantı metni kılavuz adı gibiyse onu, değilse (\"buradan indiriniz\", tarihli duyuru satırı) belgenin kendi
+    başlığını kullanır."""
+    b = _TARIH_ON.sub("", bosluk_normalle(baglanti))
+    k = katla(b)
+    if 8 <= len(b) <= 150 and not _GENEL_BAGLANTI.match(b) and any(w in k for w in ("kilavuz", "klavuz", "rehber",
+                                                                                   "nasil", "sss", "sikca", "yardim")):
+        return b
+    return belge.baslik
+
+
+def _surum_anahtari(baslik: str, url: str) -> tuple[str, int]:
+    """Aynı kılavuzun farklı yıl sürümlerini gruplamak için (yılsız başlık, en büyük yıl)."""
+    metin = baslik + " " + unquote(urlparse(url).path)
+    yillar = [int(y) for y in re.findall(r"(?<!\d)(20[0-4]\d)(?!\d)", metin)]
+    govde = re.sub(r"\d+", "", katla(baslik))
+    govde = re.sub(r"[^a-z]+", " ", govde).strip()
+    return govde, max(yillar, default=0)
+
+
 def _uygulama_alanlari() -> set[str]:
     alanlar = set()
     for s in SISTEMLER:
@@ -173,10 +213,13 @@ class KilavuzToplayici:
         self.belge_siniri = belge_siniri
         self.derinlik = derinlik
         self.durdur = threading.Event()
+        self._islenen_ozet: set[str] = set()
 
     # ------------------------------------------------------------------ istek
-    def _getir(self, url: str, rapor: ToplamaRaporu, kosullu: bool = True):
-        """kosullu=True: kılavuz belgesi (ETag/Last-Modified ile; durum kaydedilir). False: keşif sayfası."""
+    def _getir(self, url: str, rapor: ToplamaRaporu, kosullu: bool = True, giris_kabul: bool = False):
+        """kosullu=True: kılavuz belgesi (ETag/Last-Modified ile; durum kaydedilir). False: keşif sayfası.
+        giris_kabul: katalog tohumu giriş sayfasına yönlenirse sayfa yalnız belge bağlantıları için okunur
+        (metni saklanmaz, form gönderilmez)."""
         onceki = self.kutuphane.kaynak_durumu(url) if (kosullu and self.kutuphane is not None) else None
         s = self.indirici.getir(url, etag=(onceki["etag"] if onceki else ""),
                                 last_modified=(onceki["last_modified"] if onceki else ""),
@@ -186,11 +229,43 @@ class KilavuzToplayici:
                                             (onceki["sha256"] if onceki else ""))
         if s.hata and not s.degismedi:
             rapor.hatalar.append(f"{url}: {s.hata}")
-        if s.basarili and s.son_url and s.son_url != url and _GIRIS_YOLU.search(s.son_url.lower()):
+        if s.basarili and s.son_url and s.son_url != url and _GIRIS_YOLU.search(s.son_url.lower()) and not giris_kabul:
             rapor.hatalar.append(f"{url}: giriş sayfasına yönlendirdi (okunmadı)")
             s.icerik = b""
             s.durum = 0
         return s
+
+    def _wp_medya(self, kok: str, s: Sistem, rapor: ToplamaRaporu) -> list[KilavuzAdayi]:
+        """WordPress tabanlı resmî sitelerde yüklenen belgeler herkese açık arayüzden listelenir
+        (/wp-json/wp/v2/media); başlığı kılavuz olan PDF/Word dosyaları aday olur."""
+        import json as _json
+        u = urlparse(kok)
+        adaylar = []
+        for terim in ("kılavuz", "klavuz", "kilavuz"):
+            adres = f"{u.scheme}://{u.netloc}/wp-json/wp/v2/media?search={terim}&per_page=100"
+            if not adres_izinli(adres, s):
+                continue
+            yanit = self._getir(adres, rapor, kosullu=False)
+            if not yanit.basarili:
+                break
+            try:
+                ogeler = _json.loads(yanit.icerik.decode("utf-8", "ignore"))
+            except ValueError:
+                break
+            if not isinstance(ogeler, list):
+                break
+            for o in ogeler:
+                url = kanonik(str(o.get("source_url") or ""))
+                baslik = bosluk_normalle(re.sub(r"<[^>]+>", " ", str((o.get("title") or {}).get("rendered", ""))))
+                if not url.lower().endswith(BELGE_UZANTILARI) or not adres_izinli(url, s):
+                    continue
+                puan, ait = _kilavuz_puani(baslik, url, s)
+                if puan >= 3 and ait:
+                    adaylar.append(KilavuzAdayi(url, baslik, s.kimlik, adres, puan, True))
+            if adaylar:
+                break
+        rapor.say(s.kimlik, "wp_medya", len(adaylar))
+        return adaylar
 
     # ------------------------------------------------------------------ keşif
     def kesfet(self, s: Sistem, rapor: ToplamaRaporu) -> list[KilavuzAdayi]:
@@ -198,9 +273,11 @@ class KilavuzToplayici:
         adaylar: dict[str, KilavuzAdayi] = {}
         kuyruk = [(t, 0) for t in s.tohumlar]
         gorulen: set[str] = set()
+        wp_denenen: set[str] = set()
         sayfa = 0
         while kuyruk and sayfa < self.sayfa_siniri and not self.durdur.is_set():
             url, derinlik = kuyruk.pop(0)
+            url = url if url in s.tohumlar else kanonik(url)
             if url in gorulen:
                 continue
             gorulen.add(url)
@@ -208,9 +285,15 @@ class KilavuzToplayici:
             if not adres_izinli(url, s, tohum=tohum):
                 rapor.say(s.kimlik, "reddedilen_adres")
                 continue
-            yanit = self._getir(url, rapor, kosullu=False)
+            yanit = self._getir(url, rapor, kosullu=False, giris_kabul=tohum)
             if not yanit.basarili:
                 continue
+            host = urlparse(url).netloc
+            if host not in wp_denenen and (b"wp-content" in yanit.icerik[:300000]
+                                           or b"/uploads/sites/" in yanit.icerik[:300000]):
+                wp_denenen.add(host)
+                for a in self._wp_medya(url, s, rapor):
+                    adaylar.setdefault(a.url, a)
             sayfa += 1
             rapor.say(s.kimlik, "sayfa")
             if not (yanit.icerik_turu or "").lower().startswith(("text/html", "application/xhtml")) \
@@ -219,6 +302,7 @@ class KilavuzToplayici:
             giris_sayfasi = bool(_PAROLA.search(yanit.icerik))
             sistem_sayfasi = sistem_alani_mi(url)
             for hedef, metin in _baglantilar(yanit.icerik, yanit.son_url or url):
+                hedef = kanonik(hedef)
                 if hedef in gorulen:
                     continue
                 yol = urlparse(hedef).path.lower()
@@ -240,26 +324,59 @@ class KilavuzToplayici:
                     kuyruk.append((hedef, derinlik + 1))
                     if puan >= 5 and adres_izinli(hedef, s):   # kılavuz/SSS başlıklı yardım sayfası
                         adaylar.setdefault(hedef, KilavuzAdayi(hedef, metin, s.kimlik, url, puan - 1, False))
-        sirali = sorted(adaylar.values(), key=lambda a: (-a.puan, not a.belge))
+        # aynı kılavuzun yıllara göre sürümlerinden (KPSS-2015/1 ... KPSS-2026/1) yalnız en yenisi
+        en_yeni: dict[str, KilavuzAdayi] = {}
+        eski_surum = 0
+        for a in adaylar.values():
+            govde, yil = _surum_anahtari(a.baslik, a.url)
+            if not govde or not yil:
+                en_yeni[a.url] = a
+                continue
+            mevcut = en_yeni.get(govde)
+            if mevcut is None or _surum_anahtari(mevcut.baslik, mevcut.url)[1] < yil:
+                if mevcut is not None:
+                    eski_surum += 1
+                en_yeni[govde] = a
+            else:
+                eski_surum += 1
+        if eski_surum:
+            rapor.say(s.kimlik, "eski_surum_atlandi", eski_surum)
+        sirali = sorted(en_yeni.values(), key=lambda a: (-a.puan, not a.belge))
         rapor.say(s.kimlik, "aday", len(sirali))
         return sirali
 
     # ------------------------------------------------------------------ işleme
     def _sistemi_belirle(self, belge: KilavuzBelgesi, onerilen: Sistem) -> Sistem | None:
-        on = belge.baslik + "\n" + belge.metin[:6000]
+        on = belge.baslik + "\n" + belge.metin[:8000]
         bulunan = sistem_bul(on, en_az_puan=2.5)
         if not bulunan:
             return onerilen if onerilen.kimlik != "TOGU" else None
         if any(x[0].kimlik == onerilen.kimlik for x in bulunan[:2]):
             return onerilen
-        return bulunan[0][0]
+        ilk = bulunan[0]
+        ikinci = bulunan[1][1] if len(bulunan) > 1 else 0.0
+        baslikta = sistem_bul(belge.baslik, en_az_puan=1.75)
+        if baslikta and baslikta[0][0].kimlik == ilk[0].kimlik:
+            return ilk[0]                              # başlığında sistem adı geçen kılavuz
+        if onerilen.kimlik == "TOGU":                  # genel el kitabı vb.: tek bir sisteme baskın değilse TOGÜ
+            return ilk[0] if ilk[1] >= 6 and ilk[1] >= 2 * ikinci else onerilen
+        return ilk[0]
 
     @staticmethod
     def _kilavuz_mu(belge: KilavuzBelgesi, baglanti_metni: str) -> bool:
+        """Kullanım kılavuzu mu? Duyuru, ilan, çağrı ve mevzuat metinleri elenir; ekran/düğme/menü anlatan adımlar
+        ya da kılavuz/SSS başlığı aranır."""
         o = belge.ozet()
-        k = katla(belge.baslik + " " + baglanti_metni)
-        return o["adim"] >= 2 or o["etiket"] >= 2 or o["yol"] >= 1 or any(w in k for w in ("kilavuz", "klavuz",
-                                                                                            "sss", "sikca"))
+        baslik = belge.baslik + " " + baglanti_metni
+        k = katla(baslik)
+        kilavuz_adi = any(w in k for w in ("kilavuz", "klavuz", "sss", "sikca sorulan", "nasil", "yardim", "rehber"))
+        if _DUYURU.search(baslik) and not kilavuz_adi:
+            return False
+        arayuz_adimi = sum(1 for b in belge.bolumler for a in b.adimlar if _ARAYUZ_EYLEMI.search(a))
+        guclu = arayuz_adimi >= 3 or o["yol"] >= 1 or o["etiket"] >= 3
+        if belge.tur == "html" and len(belge.metin) < 400 and not guclu:
+            return False                               # bağlantı listesi / duyuru sayfası
+        return guclu or (kilavuz_adi and bool(arayuz_adimi or o["etiket"] or o["adim"] >= 2))
 
     def isle(self, aday: KilavuzAdayi, rapor: ToplamaRaporu) -> dict | None:
         s = sistem(aday.sistem)
@@ -272,14 +389,19 @@ class KilavuzToplayici:
         if _PAROLA.search(yanit.icerik[:200000]):
             rapor.say(aday.sistem, "giris_sayfasi_atlandi")
             return None
+        if yanit.sha256 in self._islenen_ozet or self._baska_adreste_var(yanit.sha256, aday.url):
+            rapor.say(aday.sistem, "ayni_icerik")
+            return None
+        self._islenen_ozet.add(yanit.sha256)
         ad = unquote(urlparse(aday.url).path.rsplit("/", 1)[-1])
         try:
-            belge = ayristir(yanit.icerik, ad, baslik=aday.baslik if len(aday.baslik) >= 8 else "")
+            belge = ayristir(yanit.icerik, ad)
         except Exception as e:  # noqa: BLE001 - bozuk belge taramayı durdurmaz
             rapor.hatalar.append(f"{aday.url}: ayrıştırılamadı ({e})")
             return None
         if belge is None:
             return None
+        belge.baslik = _baslik_sec(aday.baslik, belge)
         kayit = {"url": aday.url, "sistem": aday.sistem, "baslik": belge.baslik, **belge.ozet()}
         if belge.taranmis:
             kayit["sonuc"] = "taranmis"
@@ -307,6 +429,14 @@ class KilavuzToplayici:
         rapor.belgeler.append(kayit)
         return kayit
 
+    def _baska_adreste_var(self, sha: str, url: str) -> bool:
+        if self.kutuphane is None or not sha:
+            return False
+        r = self.kutuphane.db.execute(
+            "SELECT 1 FROM surumler s JOIN belgeler b ON b.id=s.belge_id WHERE s.sha256=? AND b.kimlik LIKE 'KLV:%'"
+            " AND b.kaynak_url<>? AND s.gecerlilik_bitis IS NULL LIMIT 1", (sha, url)).fetchone()
+        return r is not None
+
     def _depola(self, yanit, aday: KilavuzAdayi, belge: KilavuzBelgesi, s: Sistem | None) -> str:
         if self.depo is None or not aday.belge:
             return ""
@@ -322,6 +452,7 @@ class KilavuzToplayici:
     # ------------------------------------------------------------------ ana giriş
     def topla(self, sistemler: list[str] | None = None, ilerleme: IlerlemeFn | None = None) -> ToplamaRaporu:
         rapor = ToplamaRaporu()
+        self._islenen_ozet = set()
         bildir = ilerleme or (lambda m: None)
         secili = [s for s in SISTEMLER if (not sistemler or s.kimlik in sistemler) and s.tohumlar]
         islenen: set[str] = set()

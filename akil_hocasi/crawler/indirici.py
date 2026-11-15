@@ -16,7 +16,10 @@ from urllib.parse import urljoin, urlparse
 from .. import __version__
 from . import beyaz_liste
 
-KULLANICI_AJANI = f"AkilHocasi/{__version__} (yerel mevzuat asistani; saygili tarayici)"
+ROBOT_ADI = "AkilHocasi"
+# Bazı kamu siteleri tarayıcı kimliği taşımayan istekleri reddeder; kim olduğumuz açıkça yazılır.
+KULLANICI_AJANI = (f"Mozilla/5.0 (compatible; {ROBOT_ADI}/{__version__}; yerel mevzuat asistani; "
+                   "+https://github.com/terrazi/akil-hocasi)")
 ZAMAN_ASIMI = 30
 EN_BUYUK_BOYUT = 60 * 1024 * 1024   # 60 MB
 
@@ -60,6 +63,28 @@ class Indirici:
                 time.sleep(self.istek_arasi - gecen)
             self._son_istek[host] = time.time()
 
+    def _eski_tls(self):
+        """Eski TLS ayarlı sunucular için ayrı oturum: güvenlik düzeyi 1 ve eski yeniden anlaşma; sertifika yine
+        doğrulanır. Yalnız ilk bağlantı el sıkışma hatasıyla düşerse kullanılır."""
+        if getattr(self, "_eski", None) is None:
+            import ssl
+
+            import requests
+            from requests.adapters import HTTPAdapter
+
+            class _Uyarlayici(HTTPAdapter):
+                def init_poolmanager(self, *a, **k):
+                    baglam = ssl.create_default_context()
+                    baglam.set_ciphers("DEFAULT@SECLEVEL=1")
+                    baglam.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
+                    k["ssl_context"] = baglam
+                    return super().init_poolmanager(*a, **k)
+
+            self._eski = requests.Session()
+            self._eski.headers.update(self.oturum.headers)
+            self._eski.mount("https://", _Uyarlayici())
+        return self._eski
+
     def _robots_izin(self, url: str) -> bool:
         u = urlparse(url)
         kok = f"{u.scheme}://{u.netloc}"
@@ -75,7 +100,7 @@ class Indirici:
             except Exception:
                 self._robots[kok] = None
         rp = self._robots[kok]
-        return True if rp is None else rp.can_fetch(KULLANICI_AJANI, url)
+        return True if rp is None else rp.can_fetch(ROBOT_ADI, url)
 
     def getir(self, url: str, etag: str = "", last_modified: str = "",
               ek_izin: Callable[[str], bool] | None = None) -> IndirmeSonucu:
@@ -97,7 +122,12 @@ class Indirici:
         try:
             r = self.oturum.get(url, headers=basliklar, timeout=ZAMAN_ASIMI, stream=True)
         except Exception as e:  # ağ yok, zaman aşımı
-            return IndirmeSonucu(url, 0, hata=str(e))
+            if not _eski_tls_hatasi(e):
+                return IndirmeSonucu(url, 0, hata=str(e))
+            try:                                       # eski TLS yapılandırmalı resmî sunucu (ör. kik.gov.tr)
+                r = self._eski_tls().get(url, headers=basliklar, timeout=ZAMAN_ASIMI, stream=True)
+            except Exception as e2:  # noqa: BLE001
+                return IndirmeSonucu(url, 0, hata=str(e2))
         son_url = getattr(r, "url", url) or url
         if son_url != url and not izinli(son_url):
             return IndirmeSonucu(url, 0, hata="Yönlendirme beyaz liste dışına çıktı")
@@ -117,3 +147,9 @@ class Indirici:
             icerik_turu=r.headers.get("Content-Type", ""),
             etag=r.headers.get("ETag", ""), last_modified=r.headers.get("Last-Modified", ""),
             sha256=hashlib.sha256(icerik).hexdigest(), son_url=son_url)
+
+
+def _eski_tls_hatasi(e: Exception) -> bool:
+    m = str(e).lower()
+    return "ssl" in m and any(x in m for x in ("handshake failure", "unsafe legacy renegotiation",
+                                               "dh key too small", "unsupported protocol"))

@@ -23,6 +23,7 @@ Bilgi üretmez: resmî kaynaktan alır, doğrular, kaynağıyla sunar. Kamu sist
 | Anlam araması (Qwen3 Embedding) + kelime araması birleşik | Çalışır, test edildi |
 | Kendini geliştirme: çalışma soruları, hatalardan yöntem dersleri, yordam ayarı denemeleri, model yarışı | Çalışır, test edildi |
 | Resmî Yazı Hazırlama: gelen yazı çözümleme, 2020 Yönetmeliğine göre taslak, sınama, kontrol listesi, Word + EBYS metni | Çalışır, test edildi |
+| Sistem Rehberi: EBYS, MYS, KBS, HİTAP, SGK, YÖKSİS, YÖK PBS, EKAP, Kariyer Kapısı, ÖSYM/KPSS ekranlarında resmî kılavuzdan adım adım yardım; "Ekranımda takıldım" | Çalışır, test edildi |
 | Çekirdek bilgi paketi: temel mevzuat kurulumla gelir (internet yokken ilk gün de kaynaklı cevap) | Derleme hattında resmî kaynaktan |
 | Kaggle'da yoğun eğitim: öğretmen modelle damıtma, 4B ince ayar, ilke karnesiyle sınav, programa ekleme | Defterler ve hat hazır; ilk GPU çalıştırması bekleniyor |
 | Hesaplama, Ön Kontrol | Yer tutucu sayfa (Faz 4, 5) |
@@ -132,6 +133,30 @@ başlık, konu ve muhatap biçimi (yönelme hâli), ilgi sıralaması, 1,25 cm g
   doğrulama kodu üretilmez**; bunları EBYS verir. Başlık, imza ve iletişim bilgileri *Birim profili*nden gelir.
 - Danışma cevabındaki *Yazıya dönüştür* düğmesi, doğrulanmış cevabı yazının dayanağı yapar.
 
+## Sistem Rehberi (EBYS, MYS, KBS, HİTAP, SGK, YÖKSİS, EKAP, Kariyer Kapısı, ÖSYM/KPSS…)
+
+Personelin her gün kullandığı çevrim içi sistemlerde takıldığı yerde ekran ekran yol gösterir. **Program bu sistemlere
+bağlanmaz, giriş yapmaz, ekranlarına dokunmaz**; işlemi kullanıcı kendisi yapar. Yol göstermenin tek kaynağı resmî
+kullanım kılavuzlarıdır:
+
+- **Kılavuzları kendisi bulur:** Muhasebat (MYS/HYS, KBS maaş-ek ders-sosyal hak, TKYS), SGK (HİTAP, işveren
+  uygulamaları), YÖK, KİK, Cumhurbaşkanlığı İK Ofisi, ÖSYM, Kamu SM ve TOGÜ (ebysyardim.gop.edu.tr ve birim siteleri)
+  sayfalarından kılavuz ve yardım belgelerini indirir, sayfa ve bölümlerine ayırır; haftalık taramada yeni sürümleri
+  yakalar. Sistem alan adlarında (kbs.gov.tr, ebys.gop.edu.tr, hitap…) yalnız herkese açık PDF/Word belgeleri okunur;
+  giriş sayfası, form ve uygulama ekranı hiçbir koşulda istenmez, çerez tutulmaz.
+- **Elinizdeki kılavuzu ekleyin:** EBYS ile gelen ya da eğitimde verilen kılavuzlar *Kılavuz ekle…* ile kütüphaneye
+  girer (hangi sisteme ait olduğu kendiliğinden anlaşılır).
+- **Ne yapmak istiyorsunuz?** Sistemi seçip yazın ("kurum dışı evrak yazma", "ödeme emri onaya gönderme"): kılavuzun
+  ilgili bölümü, kılavuzdaki adımlar, menü yolu, ekranda arayacağınız düğme/alan adları ve **kılavuz sayfasının
+  görüntüsü** gelir. Sık işlemler listesi kılavuz başlıklarından çıkarılır.
+- **Ekranımda takıldım:** Ekranın takıldığınız bölgesini seçin (ya da Win+Shift+S ile alıp *Panodaki ekran görüntüsünü
+  oku*). Görüntü bu bilgisayarda OCR ile okunur, TC/IBAN/kart/telefon maskelenir, kaydedilmez. Program adres
+  çubuğundan ve ekrandaki adlardan sistemi, ekranı ve hata iletisini tanır; ilgili kılavuz sayfalarını gösterir ve
+  Danışma'ya hazır bir soru önerir. Hızlı Yakala penceresindeki *Bu ekranda takıldım* düğmesi de aynı işi yapar.
+- **Uydurma ekran adı yok:** Danışma'da kullanım sorularında kılavuz bölümleri kaynak olur; cevaptaki her düğme, menü
+  ve alan adı (tırnak içinde ya da "A > B > C" yolu) kılavuz metninde geçmelidir, geçmeyen cümle çıkarılır.
+- *Sistemi tarayıcıda aç* düğmesi yalnız resmî giriş adresini kullanıcının kendi tarayıcısında açar.
+
 ## Sürekli öğrenme ve kendini geliştirme
 
 Program kullanıldıkça ve her gece kendini sınayarak gelişir. Öğrendiği şey kanunun ne dediği değil;
@@ -197,6 +222,8 @@ Akıl Hocası Gözlemci'nin sabit kimliğine cevap verir.
 - **Hızlı Yakala:** `Win+Shift+Y` (Ayarlar'dan değiştirilebilir) → alanı seçin → metne tıklayın,
   sürükleyin, çift tık kelime, üçlü tık satır, `Ctrl+A` / `Ctrl+C`. TC ve IBAN varsayılan olarak
   maskeli kopyalanır. Print Screen'den sonra tepside "metni al?" bildirimi çıkar.
+- **Sistemler:** EBYS, MYS, KBS, HİTAP… ekranlarında adım adım yardım; *Ekranımda takıldım* ile ekran görüntüsünden
+  sistemi ve ilgili kılavuz sayfasını bulur.
 - **Belge Deposu:** İndirilen formların orijinalleri; açtığınız her dosya bir kopyadır.
 - **Kaynaklar:** Taranan siteler, canlı tarama ilerlemesi, gözlem günlüğü (eklendi / güncel / atlandı ve nedeni),
   ikincil site ipuçları ve eklentinin eşleşme durumu. Site eklemek için adresi yazıp *Ekle*.
@@ -216,6 +243,8 @@ Tüm veri `%LOCALAPPDATA%\AkilHocasi` altındadır: `kutuphane.db`, `depo\`, `mo
 - [ ] `Win+Shift+Y` kısayolunun başka programla çakışıp çakışmadığı
 - [ ] Model hızı (16 GB ve 8 GB RAM'de), disk kullanımı
 - [ ] Altın soru seti (birimlerden gelecek 15–20 gerçek soru)
+- [ ] Sistem Rehberi: TOGÜ'de kullanılan sistem ekranlarının (EBYS, MYS, KBS, HİTAP, YÖKSİS) görüntüleriyle ekran
+      tanıma; birimlerin elindeki iç eğitim kılavuzlarının eklenmesi
 - [ ] Kaynak Havuzu: varsayılan TOGÜ site listesinin doğrulanması, kurum Edge/Chrome politikasının görünmez
       tarayıcıya ve paketlenmemiş eklentiye izin verip vermediği, TOGÜ sayfalarında ana metin seçiminin doğruluğu
 

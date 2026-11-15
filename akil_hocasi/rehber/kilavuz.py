@@ -167,8 +167,22 @@ def html_sayfalari(veri: bytes | str) -> list[Sayfa]:
     from bs4 import BeautifulSoup
 
     corba = BeautifulSoup(veri, "lxml")
-    for etiket in corba(["script", "style", "nav", "header", "footer", "noscript", "form", "iframe"]):
+    for etiket in corba(["script", "style", "nav", "header", "footer", "noscript", "form", "iframe", "aside",
+                         "button", "select"]):
         etiket.decompose()
+    sablon = re.compile(r"(?:^|[-_ ])(?:nav|navbar|menu|menü|header|footer|sidebar|breadcrumb|modal|popup|cookie|"
+                        r"social|share|paylas|slider|banner|duyuru-bandi|top-bar|topbar)(?:$|[-_ ])", re.IGNORECASE)
+    for el in corba.find_all(True):
+        if el.attrs is None:
+            continue
+        ad = " ".join(el.get("class") or []) + " " + str(el.get("id") or "") + " " + str(el.get("role") or "")
+        if sablon.search(ad) and el.name not in ("html", "body", "main", "article"):
+            el.decompose()
+    for liste in corba.find_all(["ul", "ol"]):           # bağlantı yoğun listeler (site menüsü, kısayollar)
+        metin = bosluk_normalle(liste.get_text(" "))
+        baglanti = sum(len(bosluk_normalle(a.get_text(" "))) for a in liste.find_all("a"))
+        if metin and baglanti >= 0.6 * len(metin) and len(liste.find_all("a")) >= 4:
+            liste.decompose()
     govde = corba.find("main") or corba.find("article") or corba.body or corba
     satirlar = []
     boyutlar = {"h1": 22.0, "h2": 18.0, "h3": 15.0, "h4": 13.0}
@@ -182,6 +196,19 @@ def html_sayfalari(veri: bytes | str) -> list[Sayfa]:
             metin = "• " + metin
         satirlar.append(Satir(metin, boyutlar.get(el.name, 11.0), el.name in boyutlar))
     return [Sayfa(1, satirlar)]
+
+
+def html_basligi(veri: bytes | str) -> str:
+    """Sayfanın kendi başlığı: ilk h1, yoksa <title> (site adı ekleri " | ", " - " sonrası atılır)."""
+    from bs4 import BeautifulSoup
+
+    corba = BeautifulSoup(veri, "lxml")
+    h1 = corba.find("h1")
+    if h1 and 4 <= len(bosluk_normalle(h1.get_text(" "))) <= 160:
+        return bosluk_normalle(h1.get_text(" "))
+    if corba.title and corba.title.string:
+        return re.split(r"\s[|–-]\s", bosluk_normalle(corba.title.string))[0][:160]
+    return ""
 
 
 # ====================================================================== temizlik
@@ -522,6 +549,7 @@ def ayristir(veri: bytes, ad: str = "", baslik: str = "") -> KilavuzBelgesi | No
         sayfalar, yer_imleri = docx_sayfalari(veri), []
     elif tur == "html":
         sayfalar, yer_imleri = html_sayfalari(veri), []
+        baslik = baslik or html_basligi(veri)
     else:
         return None
     sayfalar = [Sayfa(s.no, [Satir(nfc(x.metin), x.boyut, x.kalin) for x in s.satirlar]) for s in sayfalar]

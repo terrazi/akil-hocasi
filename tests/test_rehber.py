@@ -302,3 +302,60 @@ def test_hat_kullanim_sorusunda_kilavuzu_kaynak_yapar(kutuphane, tmp_path):
     # mevzuat sorusunda kılavuz öne alınmaz
     c2 = hat.cevapla("Aylıksız izin ne kadar verilebilir?", kayit=False)
     assert c2.kaynaklar and c2.kaynaklar[0].pasaj.belge_turu != "kilavuz_yerel"
+
+
+def test_kilavuz_sorulari_ve_veri_seti_kaydi(kutuphane, tmp_path):
+    from akil_hocasi.library.db import Kutuphane
+    from akil_hocasi.rehber import kilavuz_kaydi_yukle, kilavuz_sorulari
+    _rehber(kutuphane, tmp_path)
+    sorular = kilavuz_sorulari(kutuphane)
+    turler = {s["tur"] for s in sorular}
+    assert turler == {"kilavuz_islem", "kilavuz_hata"}
+    islem = next(s for s in sorular if s["tur"] == "kilavuz_islem")
+    assert "“Ödeme Emri Belgesi Oluşturma”" in islem["soru"] and islem["dayanak"][0].endswith("/b1")
+    hata = next(s for s in sorular if s["tur"] == "kilavuz_hata")
+    assert hata["soru"].startswith("MYS ekranında “Kullanıcının bu birimde yetkisi bulunmamaktadır” uyarısı")
+    # kilavuz_topla çıktısı (bölümlü kayıt) başka kütüphaneye aynı bölümlerle yüklenir
+    belge = kutuphane.belgeleri_listele("KLV:MYS:")[0]
+    kayit = {"kimlik": "KLV:MYS:abc123", "sistem": "MYS", "baslik": belge["baslik"],
+             "url": "https://muhasebat.hmb.gov.tr/kilavuz.pdf", "tarih": "", "surum": "",
+             "bolumler": [{"no": p.madde_no, "baslik": p.baslik, "metin": p.metin}
+                          for p in kutuphane.belge_maddeleri(belge["kimlik"])]}
+    k2 = Kutuphane(tmp_path / "k2.db")
+    assert kilavuz_kaydi_yukle(k2, kayit) == "yeni" and kilavuz_kaydi_yukle(k2, kayit) == "ayni"
+    assert [x["soru"] for x in kilavuz_sorulari(k2)] == [x["soru"] for x in sorular]
+    k2.kapat()
+
+
+def test_toplayici_yardimcilari():
+    from akil_hocasi.crawler.indirici import _eski_tls_hatasi
+    from akil_hocasi.rehber.kilavuz import KilavuzBelgesi, KilavuzBolumu
+    from akil_hocasi.rehber.toplayici import KilavuzToplayici, _baslik_sec, _surum_anahtari, kanonik
+    assert kanonik("https://ebysyardim.gop.edu.tr:443/a/b.pdf#s2") == "https://ebysyardim.gop.edu.tr/a/b.pdf"
+    eski = _surum_anahtari("KPSS-2015/1 TERCİH KILAVUZU", "https://x/2015/KPSS/kilavuz.pdf")
+    yeni = _surum_anahtari("KPSS-2026/1 TERCİH KILAVUZU", "https://x/2026/KPSS/kilavuz.pdf")
+    assert eski[0] == yeni[0] and yeni[1] > eski[1]
+    belge = KilavuzBelgesi("EBYS Eğitim Sunumu", "pdf", 3, [])
+    assert _baslik_sec("buradan indiriniz.", belge) == "EBYS Eğitim Sunumu"
+    assert _baslik_sec("19 ÇARŞAMBA 19 AĞUSTOS 2026 ÇARŞAMBA Office 365 Kılavuzu", belge) == "Office 365 Kılavuzu"
+    ilan = KilavuzBelgesi("4/B Sözleşmeli Personel Alım İlanı", "pdf", 2,
+                          [KilavuzBolumu("1", "Genel şartlar", 1, 1, "x" * 300,
+                                         adimlar=["Türk vatandaşı olmak,", "Kamu haklarından mahrum olmamak,"])])
+    assert not KilavuzToplayici._kilavuz_mu(ilan, "2025-2 Sözleşmeli Personel Alım İlanı")
+    assert _eski_tls_hatasi(Exception("[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure"))
+    assert not _eski_tls_hatasi(Exception("Name or service not known"))
+
+
+def test_html_site_kalintilari_atilir():
+    html = ("<html><head><title>Kilit Çözme Yardım | Kamu SM</title></head><body>"
+            "<div class='modal'>KAPAT [X] Yeni sertifika hiyerarşisi duyurusu</div>"
+            "<div id='main-menu'><a href='/1'>Hakkımızda</a></div>"
+            "<ul><li><a href='/a'>Ürünler</a></li><li><a href='/b'>Yardım</a></li><li><a href='/c'>İletişim</a></li>"
+            "<li><a href='/d'>Duyurular</a></li></ul>"
+            "<div class='icerik'><h2>PIN Kilidini Çözme</h2><ol><li>Online İşlemler sayfasında “Giriş” düğmesine "
+            "basılır.</li><li>PIN Oluşturma/Kilit Çözme menüsünden kart seçilir.</li></ol></div></body></html>").encode()
+    b = ayristir(html, "kilit.html")
+    assert b.baslik == "Kilit Çözme Yardım"
+    tum = b.metin
+    assert "KAPAT" not in tum and "Hakkımızda" not in tum and "Ürünler" not in tum
+    assert "PIN Kilidini Çözme" in tum and "Giriş" in b.bolumler[0].etiketler
