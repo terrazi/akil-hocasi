@@ -115,8 +115,9 @@ def adres_izinli(url: str, s: Sistem | None = None, tohum: bool = False) -> bool
     tam = url.lower()
     if tohum and s is not None and url in s.tohumlar:
         return True                                   # katalogdaki tohum (herkese açık giriş/duyuru sayfası)
-    if _GIRIS_YOLU.search(tam) or _RISKLI.search(u.path + "?" + u.query):
-        return False
+    belge = u.path.lower().endswith(BELGE_UZANTILARI)
+    if _GIRIS_YOLU.search(tam) or (not belge and _RISKLI.search(u.path + "?" + u.query)):
+        return False                                  # (statik belge adındaki "ödeme" gibi sözcükler eylem değildir)
     if sistem_alani_mi(url):
         # sistem alan adında yalnız statik belge dosyası (PDF/Word) okunur; sayfa, form, uygulama okunmaz
         return u.path.lower().endswith(BELGE_UZANTILARI)
