@@ -130,13 +130,30 @@ def gorus_ayristir(metin: str, kaynak: str = "") -> dict | None:
 
 
 def kutuphane_anahtari(kutuphane, kanun_no: str, madde_no: str) -> str | None:
-    """(657, 105) → kütüphanede yürürlükteki maddenin anahtarı ('MEV:1.5.657/105'); yoksa None."""
-    for tur in (1, 4):                                            # kanun, KHK
-        for tertip in (5, 4, 3):
-            kimlik = f"MEV:{tur}.{tertip}.{kanun_no}"
-            if kutuphane.madde_getir(kimlik, madde_no) is not None:
-                return f"{kimlik}/{madde_no}"
+    """(657, 105) → kütüphanede yürürlükteki maddenin anahtarı; yoksa None.
+
+    Tarayıcı kanunları yalın numarayla saklar ('657/105'); KHK ve mevzuat.gov.tr kimlikli belgeler
+    'MEV:{tür}.{tertip}.{no}' biçimindedir. İkisi de denenir.
+    """
+    adaylar = [kanun_no] + [f"MEV:{tur}.{tertip}.{kanun_no}" for tur in (1, 4) for tertip in (5, 4, 3)]
+    for kimlik in adaylar:
+        if kutuphane.madde_getir(kimlik, madde_no) is not None:
+            return f"{kimlik}/{madde_no}"
     return None
+
+
+def dogrudan_sinav_sorulari(ogeler: list[dict]) -> list[dict]:
+    """Öğretmen model yokken (işlemci sınavı) görüşün kendi sorusu (kurumun talebi) olduğu gibi sınav sorusu olur;
+    varyasyon üretilmez. Soru ve resmî sonuç yazının kendisinden gelir."""
+    sorular = []
+    for o in ogeler:
+        talep = re.sub(r"\s+", " ", str(o.get("talep", ""))).strip()
+        if len(talep) < 30:
+            continue
+        sorular.append({"id": f"g-{o['id']}", "soru": talep[:900], "tur": "gercek",
+                        "beklenen_dayanak": o["beklenen_dayanak"], "kaynak": o.get("kaynak", ""),
+                        "gorus_id": o["id"], "resmi_sonuc": o.get("sonuc", "")})
+    return sorular
 
 
 def _katla(s: str) -> str:

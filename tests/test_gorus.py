@@ -88,3 +88,20 @@ def test_kunye_tarihi_ve_on_ek():
     metin = ORNEK.replace("İlgi yazınızda, Devlet", "(10/7/2014-3512) Devlet").replace("11/02/2013", "")
     g = gorus_ayristir(metin)
     assert g and g["tarih"] == "2014-07-10" and g["talep"].startswith("Devlet memurlarının")
+
+
+def test_kutuphane_anahtari_tarayicinin_yalin_kanun_kimligini_bulur(kutuphane):
+    """Tarayıcı kanunları '657' kimliğiyle saklar; görüş dayanakları bununla eşleşmeli (veri tur 2'de 0/51 hatası)."""
+    from akil_hocasi.library.ayristirici import MaddeParcasi
+    from akil_hocasi.ogrenme.gorus import dogrudan_sinav_sorulari, gorusten_sinav_ogesi, kutuphane_anahtari
+    metin = "Memurlara refakat izni verilir ve bu süre içinde aylık ödenir " * 3
+    kutuphane.belge_kaydet(tur="kanun", kimlik="657", baslik="657 sayılı Devlet Memurları Kanunu", metin=metin,
+                           sha256="x1", kaynak_url="https://www.mevzuat.gov.tr/MevzuatMetin/1.5.657.pdf",
+                           maddeler=[MaddeParcasi(madde_no="105", metin=metin)])
+    assert kutuphane_anahtari(kutuphane, "657", "105") == "657/105"
+    o = gorusten_sinav_ogesi(kutuphane, {"id": "g1", "dayanaklar": [["657", "105"]], "alintilar": [],
+                                          "talep": "Refakat izni süresince personelin aylığının ödenip ödenmeyeceği "
+                                                   "hususunda görüş istenmektedir.", "sonuc": "Ödenir."})
+    assert o and o["beklenen_dayanak"] == ["657/105"]
+    s = dogrudan_sinav_sorulari([o])
+    assert s[0]["tur"] == "gercek" and s[0]["soru"].startswith("Refakat izni") and s[0]["resmi_sonuc"] == "Ödenir."

@@ -864,6 +864,23 @@ def sina(veri_k: Path, bin_k: Path, temel: Path, yeni: Path, sinir: int, bitis: 
     from akil_hocasi.library.db import Kutuphane
     from akil_hocasi.ogrenme.degerlendirme import altin_sonucu
     from akil_hocasi.yz.sunucu import SunucuModeli
+    if not (veri_k / "gercek_sinav.jsonl").is_file() and (veri_k / "gorusler.jsonl").is_file():
+        # veri turunda görüşler kütüphaneye bağlanamadıysa (ör. eski sürüm hatası) sınavda yeniden bağlanır;
+        # öğretmen olmadığından kurumun kendi sorusu kullanılır, varyasyon üretilmez
+        from akil_hocasi.ogrenme.gorus import dogrudan_sinav_sorulari, gorusten_sinav_ogesi
+        kg = Kutuphane(veri_k / "kutuphane.db")
+        gorusler = {}
+        for s in (veri_k / "gorusler.jsonl").read_text("utf-8").splitlines():
+            if s.strip():
+                g = json.loads(s)
+                gorusler[g["id"]] = g
+        ogeler = [o for g in gorusler.values() if (o := gorusten_sinav_ogesi(kg, g))]
+        gs = dogrudan_sinav_sorulari(ogeler)
+        kg.kapat()
+        (veri_k / "gercek_sinav.jsonl").write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in gs),
+                                                   "utf-8")
+        bildir(f"Görüş yazısı: {len(gorusler)} görüşten {len(ogeler)} tanesi kütüphaneye bağlandı → {len(gs)} gerçek "
+               "sınav sorusu (kurumun kendi sorusu)")
     sorular = []
     for ad, tur in (("gercek_sinav.jsonl", None), ("sinav.jsonl", "sentetik")):   # önce gerçek sorular
         if (veri_k / ad).is_file():
@@ -876,11 +893,16 @@ def sina(veri_k: Path, bin_k: Path, temel: Path, yeni: Path, sinir: int, bitis: 
                     sorular.append({"soru": x["soru"], "beklenen_dayanak": x.get("beklenen_dayanak", []), "tur": t})
                 except (ValueError, KeyError):
                     continue
-    # sıra: gerçek → kılavuz (en çok dörtte bir) → sentetik; süre kısa kalsa da her türden soru sınanır
-    gercek = [s for s in sorular if s["tur"] not in ("sentetik", "kilavuz")]
-    kilavuz = [s for s in sorular if s["tur"] == "kilavuz"][: max(5, sinir // 4)]
-    sentetik = [s for s in sorular if s["tur"] == "sentetik"]
-    sorular = (gercek + kilavuz + sentetik)[:sinir]
+    # sıra: gerçek, gerçek, kılavuz, sentetik dönüşümlü; süre erken bitse de her türden soru sınanmış olur
+    gruplar = {"g": [s for s in sorular if s["tur"] not in ("sentetik", "kilavuz")],
+               "k": [s for s in sorular if s["tur"] == "kilavuz"],
+               "s": [s for s in sorular if s["tur"] == "sentetik"]}
+    sirali = []
+    while len(sirali) < sinir and any(gruplar.values()):
+        for g in ("g", "g", "k", "s"):
+            if gruplar[g] and len(sirali) < sinir:
+                sirali.append(gruplar[g].pop(0))
+    sorular = sirali
     gercek_n = sum(1 for s in sorular if s["tur"] != "sentetik")
     bildir(f"Sınav: {len(sorular)} görülmemiş soru ({gercek_n} gerçek/zorlaştırılmış), iki model aynı anda")
     k = Kutuphane(veri_k / "kutuphane.db")
